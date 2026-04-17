@@ -147,14 +147,20 @@ def build_pmtiles(ctx: BuildContext) -> None:
 
     ctx.pmtiles_path.parent.mkdir(parents=True, exist_ok=True)
 
-    # planetiler-style CLI. Exact flags depend on protomaps-basemaps
-    # release; adjust if the JAR in use takes different arguments.
+    # Protomaps basemaps CLI uses key=value flags (Planetiler-style).
+    # - --download: fetch Natural Earth, water/land polygons, etc.
+    # - --osm_path: local OSM PBF (we already downloaded Turkey above)
+    # - --output: PMTiles destination
+    # - --force: overwrite existing output
+    # We don't supply a landcover path → the landcover layer is skipped
+    # (Daylight landcover is multi-GB and doesn't fit GitHub runner disk).
     cmd = [
         tools["java"],
         f"-Xmx{heap}",
         "-jar", str(jar),
-        "--input", str(ctx.pbf_path),
-        "--output", str(ctx.pmtiles_path),
+        "--download",
+        f"--osm_path={ctx.pbf_path}",
+        f"--output={ctx.pmtiles_path}",
         f"--minzoom={min_z}",
         f"--maxzoom={max_z}",
         "--force",
