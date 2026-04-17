@@ -6,11 +6,7 @@ import 'package:latlong2/latlong.dart';
 
 import 'package:drivelink/app/theme/colors.dart';
 import 'package:drivelink/core/database/recent_destinations_repository.dart';
-import 'package:drivelink/features/navigation/data/datasources/nominatim_source.dart';
-import 'package:drivelink/features/navigation/data/datasources/overpass_source.dart';
-
-/// Provider for Nominatim geocoding.
-final _nominatimProvider = Provider<NominatimSource>((_) => NominatimSource());
+import 'package:drivelink/features/navigation/data/datasources/local_geocoding_source.dart';
 
 /// Address search screen — the user types a destination, picks from results,
 /// and pops back with the selected [LatLng].
@@ -77,21 +73,8 @@ class _RouteSearchScreenState extends ConsumerState<RouteSearchScreen> {
 
   Future<void> _search(String query) async {
     setState(() => _isLoading = true);
-    final nominatim = ref.read(_nominatimProvider);
-    var results = await nominatim.search(query);
-
-    // Offline fallback: search downloaded POI database.
-    if (results.isEmpty) {
-      final overpass = OverpassSource();
-      final offlinePois = await overpass.searchOfflinePois(query);
-      results = offlinePois
-          .map<GeocodingResult>((p) => (
-                displayName:
-                    p.name.isNotEmpty ? '${p.name} (offline)' : p.categoryId,
-                coordinate: p.position,
-              ))
-          .toList();
-    }
+    final geocoder = ref.read(localGeocodingSourceProvider);
+    final results = await geocoder.search(query);
 
     if (!mounted) return;
     setState(() {

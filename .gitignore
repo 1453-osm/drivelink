@@ -56,3 +56,8 @@ key.properties
 # llama.cpp source (cloned by setup script, ~200MB)
 packages/flutter_llama/llama.cpp/
 packages/flutter_llama/.cxx/
+
+# Turkey pack build artifacts (multi-GB local outputs)
+tools/build_turkey_pack/bin/
+tools/build_turkey_pack/output/
+tools/build_turkey_pack/__pycache__/

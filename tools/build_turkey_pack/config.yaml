@@ -1,0 +1,69 @@
+# Build configuration for the DriveLink Turkey offline pack.
+# Absolute paths are relative to tools/build_turkey_pack/.
+
+# ─── Source data ────────────────────────────────────────────────────────
+source:
+  pbf_url: https://download.geofabrik.de/europe/turkey-latest.osm.pbf
+  pbf_sha256_url: https://download.geofabrik.de/europe/turkey-latest.osm.pbf.md5
+  bbox:
+    west: 25.65
+    south: 35.80
+    east: 44.85
+    north: 42.15
+
+# ─── External tools (must exist under bin/ relative to this config) ─────
+tools:
+  java: java
+  protomaps_jar: bin/protomaps-basemaps.jar
+  graphhopper_jar: bin/graphhopper-web-9.1.jar
+  pmtiles_cli: bin/pmtiles
+  osmium: osmium
+  sqlite3: sqlite3
+
+# ─── Build options ──────────────────────────────────────────────────────
+pmtiles:
+  # Maximum tile zoom stored in the pmtiles archive.
+  max_zoom: 15
+  # Minimum tile zoom. Protomaps v4 default is 0.
+  min_zoom: 0
+  # Java heap size for planetiler.
+  java_heap: 6g
+
+graph:
+  # GraphHopper profiles to build (car is primary; bike/foot optional).
+  profiles:
+    - name: car
+      vehicle: car
+      weighting: fastest
+  java_heap: 8g
+  # Output subdir inside the graph build.
+  cache_dir: graph-cache
+
+addresses:
+  # Tags extracted into the FTS5 table.
+  place_types:
+    - city
+    - town
+    - village
+    - suburb
+    - neighbourhood
+  # POI categories (amenity= / shop= / tourism=) pulled into searchable set.
+  amenities:
+    - fuel
+    - charging_station
+    - parking
+    - hospital
+    - pharmacy
+    - restaurant
+    - cafe
+    - atm
+    - police
+    - supermarket
+
+# ─── Release metadata ───────────────────────────────────────────────────
+release:
+  # Base URL under which assets will be published.
+  # {version} placeholder is substituted at manifest generation time.
+  asset_base_url: https://github.com/1453-osm/drivelink/releases/download/turkey-pack-{version}
+  # Filename of the top-level manifest fetched by the app.
+  manifest_filename: manifest.json

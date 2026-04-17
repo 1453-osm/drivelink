@@ -1,6 +1,8 @@
+import 'dart:convert';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart' show rootBundle;
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -8,15 +10,12 @@ import 'package:latlong2/latlong.dart' as ll;
 import 'package:maplibre_gl/maplibre_gl.dart' as ml;
 
 import 'package:drivelink/app/theme/colors.dart';
-import 'package:drivelink/app/router.dart';
-import 'package:drivelink/core/database/downloaded_regions_repository.dart';
 import 'package:drivelink/core/services/location_service.dart';
-import 'package:drivelink/core/services/offline_map_service.dart';
 import 'package:drivelink/core/services/region_coverage_service.dart';
 import 'package:drivelink/core/services/tts_service.dart';
-import 'package:drivelink/features/navigation/data/datasources/nominatim_source.dart';
+import 'package:drivelink/core/services/turkey_package_service.dart';
 import 'package:drivelink/features/navigation/data/datasources/graphhopper_source.dart';
-import 'package:drivelink/features/navigation/data/datasources/overpass_source.dart';
+import 'package:drivelink/features/navigation/data/datasources/local_poi_source.dart';
 import 'package:drivelink/features/navigation/domain/models/route_model.dart';
 import 'package:drivelink/features/navigation/domain/models/turn_instruction.dart';
 import 'package:drivelink/features/navigation/data/map_style_loader.dart';
@@ -24,11 +23,6 @@ import 'package:drivelink/features/navigation/presentation/widgets/turn_instruct
 import 'package:drivelink/features/navigation/presentation/widgets/route_info_bar.dart';
 import 'package:drivelink/features/navigation/presentation/screens/route_search_screen.dart';
 
-final _graphHopperProvider =
-    Provider<GraphHopperSource>((_) => GraphHopperSource());
-
-final _overpassProvider =
-    Provider<OverpassSource>((_) => OverpassSource());
 
 /// Navigation states:
 ///   idle        — no route, free map browsing
@@ -68,10 +62,11 @@ class _MapScreenState extends ConsumerState<MapScreen> {
   ml.Circle? _posCircle;
   ml.Circle? _destCircle;
   ml.Line? _routeLine;
-  final List<ml.Line> _regionBorderLines = [];
-  bool _regionBordersDrawn = false;
-  bool _cameraInCoveredArea = true;
-  List<DownloadedRegion> _cachedRegions = [];
+  final List<ml.Fill> _turkeyFills = [];
+  final List<ml.Line> _turkeyOutlines = [];
+  bool _turkeyOverlayDrawn = false;
+
+  List<List<ml.LatLng>>? _turkeyRings;
 
   // Route tracking (only active during _NavState.navigating)
   int _currentInstructionIndex = 0;
@@ -91,8 +86,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
   @override
   void initState() {
     super.initState();
-    // Default to downloaded region center (not Istanbul).
-    _currentPosition = const ll.LatLng(39.9, 32.8); // temp until postFrame
+    _currentPosition = defaultMapCenter;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       final knownPos = ref.read(lastKnownPositionProvider);
       if (knownPos != null) {
@@ -101,13 +95,50 @@ class _MapScreenState extends ConsumerState<MapScreen> {
       } else {
         _currentPosition = ref.read(defaultMapPositionProvider);
       }
-      // Check if offline map is downloaded
-      final hasRegions = ref.read(hasDownloadedRegionsProvider).valueOrNull;
-      if (hasRegions == false) {
-        _showMapDownloadBanner = true;
-      }
-      setState(() {}); // trigger rebuild with correct position
+      final installed =
+          ref.read(turkeyPackInstalledProvider).valueOrNull ?? false;
+      if (!installed) _showMapDownloadBanner = true;
+      setState(() {});
     });
+    _loadTurkeyRings();
+  }
+
+  Future<void> _loadTurkeyRings() async {
+    try {
+      final raw = await rootBundle.loadString('assets/geo/turkey.geojson');
+      final json = jsonDecode(raw) as Map<String, dynamic>;
+      final feature = (json['features'] as List).first as Map<String, dynamic>;
+      final geom = feature['geometry'] as Map<String, dynamic>;
+      final type = geom['type'] as String;
+      final coords = geom['coordinates'] as List;
+
+      final rings = <List<ml.LatLng>>[];
+      if (type == 'MultiPolygon') {
+        for (final poly in coords) {
+          final outer = (poly as List).first as List;
+          rings.add([
+            for (final pt in outer)
+              ml.LatLng(
+              ((pt as List)[1] as num).toDouble(),
+              (pt[0] as num).toDouble(),
+            ),
+          ]);
+        }
+      } else if (type == 'Polygon') {
+        final outer = coords.first as List;
+        rings.add([
+          for (final pt in outer)
+            ml.LatLng(
+              ((pt as List)[1] as num).toDouble(),
+              (pt[0] as num).toDouble(),
+            ),
+        ]);
+      }
+      _turkeyRings = rings;
+      if (_mapReady && !_turkeyOverlayDrawn) _drawTurkeyOverlay();
+    } catch (e) {
+      debugPrint('MapScreen: Turkey GeoJSON load failed: $e');
+    }
   }
 
   @override
@@ -136,16 +167,14 @@ class _MapScreenState extends ConsumerState<MapScreen> {
 
   void _onStyleLoaded() async {
     _mapReady = true;
-    _regionBordersDrawn = false;
+    _turkeyOverlayDrawn = false;
     if (_gotFirstFix) {
       _controller?.animateCamera(
         ml.CameraUpdate.newLatLngZoom(_toMl(_currentPosition), 15),
       );
     }
     _updatePositionCircle();
-    await _loadRegionsCache();
-    _drawRegionBorders();
-    _checkCameraCoverage();
+    await _drawTurkeyOverlay();
     // Restore route if active.
     if (_activeRoute != null) {
       _setRoutePolyline(_activeRoute!.polylinePoints);
@@ -155,39 +184,50 @@ class _MapScreenState extends ConsumerState<MapScreen> {
     }
   }
 
-  /// Draw green border lines around all downloaded regions.
-  Future<void> _drawRegionBorders() async {
+  /// Draws the Türkiye polygon as a translucent green fill + outline when
+  /// the offline pack is installed. When it isn't, draws only the outline
+  /// as a hint of what the user will get after downloading.
+  Future<void> _drawTurkeyOverlay() async {
     final c = _controller;
-    if (c == null || !_mapReady || _regionBordersDrawn) return;
+    if (c == null || !_mapReady || _turkeyOverlayDrawn) return;
+    final rings = _turkeyRings;
+    if (rings == null || rings.isEmpty) return;
 
-    // Remove old borders from map first.
-    for (final line in _regionBorderLines) {
-      try { await c.removeLine(line); } catch (_) {}
+    // Remove old objects first.
+    for (final f in _turkeyFills) {
+      try { await c.removeFill(f); } catch (_) {}
     }
-    _regionBorderLines.clear();
+    for (final l in _turkeyOutlines) {
+      try { await c.removeLine(l); } catch (_) {}
+    }
+    _turkeyFills.clear();
+    _turkeyOutlines.clear();
 
-    if (_cachedRegions.isEmpty) return;
+    final installed =
+        ref.read(turkeyPackInstalledProvider).valueOrNull ?? false;
 
-    for (final r in _cachedRegions) {
+    for (final ring in rings) {
       try {
-        final border = await c.addLine(ml.LineOptions(
-          geometry: [
-            ml.LatLng(r.north, r.west),
-            ml.LatLng(r.north, r.east),
-            ml.LatLng(r.south, r.east),
-            ml.LatLng(r.south, r.west),
-            ml.LatLng(r.north, r.west), // close the rectangle
-          ],
+        if (installed) {
+          final fill = await c.addFill(ml.FillOptions(
+            geometry: [ring],
+            fillColor: '#4CAF50',
+            fillOpacity: 0.12,
+          ));
+          _turkeyFills.add(fill);
+        }
+        final outline = await c.addLine(ml.LineOptions(
+          geometry: ring,
           lineColor: '#4CAF50',
           lineWidth: 2.0,
-          lineOpacity: 0.6,
+          lineOpacity: installed ? 0.7 : 0.4,
         ));
-        _regionBorderLines.add(border);
+        _turkeyOutlines.add(outline);
       } catch (e) {
-        debugPrint('drawRegionBorder error: $e');
+        debugPrint('drawTurkeyOverlay error: $e');
       }
     }
-    _regionBordersDrawn = true;
+    _turkeyOverlayDrawn = true;
   }
 
   @override
@@ -317,8 +357,8 @@ class _MapScreenState extends ConsumerState<MapScreen> {
     setState(() => _poiLoading = true);
     _lastPoiFetchCenter = _currentPosition;
 
-    final overpass = ref.read(_overpassProvider);
-    final results = await overpass.fetchPois(
+    final poiSrc = ref.read(localPoiSourceProvider);
+    final results = await poiSrc.fetchPois(
       center: _currentPosition,
       categoryIds: _activePois.toList(),
     );
@@ -415,205 +455,12 @@ class _MapScreenState extends ConsumerState<MapScreen> {
   }
 
   void _onCameraIdle() {
-    // Check if camera center is inside a downloaded region.
-    _checkCameraCoverage();
-
     if (_activePois.isEmpty) return;
     if (_lastPoiFetchCenter != null) {
       final dist = _distanceM(_currentPosition, _lastPoiFetchCenter!);
       if (dist < 500) return;
     }
     _fetchAndShowPois();
-  }
-
-  Future<void> _loadRegionsCache() async {
-    final repo = ref.read(downloadedRegionsRepositoryProvider);
-    repo.clearCache();
-    _cachedRegions = await repo.getAll();
-    debugPrint('Coverage: loaded ${_cachedRegions.length} regions');
-    for (final r in _cachedRegions) {
-      debugPrint('  ${r.name}: N${r.north} S${r.south} E${r.east} W${r.west}');
-    }
-  }
-
-  void _checkCameraCoverage() {
-    final c = _controller;
-    if (c == null) return;
-
-    final cam = c.cameraPosition;
-    if (cam == null) return;
-
-    final lat = cam.target.latitude;
-    final lng = cam.target.longitude;
-
-    if (_cachedRegions.isEmpty) {
-      if (!_cameraInCoveredArea) setState(() => _cameraInCoveredArea = true);
-      return;
-    }
-
-    // Add 0.05 degree (~5km) tolerance to avoid edge-case false negatives.
-    const tol = 0.05;
-    bool covered = false;
-    for (final r in _cachedRegions) {
-      if (lat >= (r.south - tol) && lat <= (r.north + tol) &&
-          lng >= (r.west - tol) && lng <= (r.east + tol)) {
-        covered = true;
-        break;
-      }
-    }
-
-    debugPrint('Coverage check: cam=${lat.toStringAsFixed(3)},${lng.toStringAsFixed(3)} covered=$covered regions=${_cachedRegions.length}');
-
-    if (covered != _cameraInCoveredArea) {
-      setState(() => _cameraInCoveredArea = covered);
-    }
-  }
-
-  /// Reverse geocode camera position to find the state/region,
-  /// then download that entire region (OsmAnd-style).
-  Future<void> _downloadCurrentArea() async {
-    final c = _controller;
-    if (c == null) return;
-
-    // Get the actual camera center from MapLibre.
-    ml.LatLng center;
-    final cam = c.cameraPosition;
-    if (cam != null) {
-      center = cam.target;
-    } else {
-      // Fallback: use current GPS or default position.
-      center = _toMl(_currentPosition);
-    }
-    debugPrint('downloadCurrentArea: camera at ${center.latitude},${center.longitude}');
-
-    // Show loading indicator.
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: Text('Bolge tespit ediliyor...'),
-        duration: Duration(seconds: 5),
-        backgroundColor: AppColors.surface,
-      ));
-    }
-
-    // Reverse geocode at state/region level to get bbox.
-    final nominatim = NominatimSource();
-    final region = await nominatim.reverseGeocodeRegion(
-      ll.LatLng(center.latitude, center.longitude),
-    );
-
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).clearSnackBars();
-
-    if (region == null) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: Text('Bolge tespit edilemedi'),
-        backgroundColor: AppColors.error,
-      ));
-      return;
-    }
-
-    // Extract short name (first part of display_name).
-    final parts = region.displayName.split(',').map((s) => s.trim()).toList();
-    final regionName = parts.first;
-    final subtitle = parts.length > 1 ? parts.sublist(1).join(', ') : '';
-
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: AppColors.surface,
-        title: Text(regionName,
-            style: TextStyle(color: AppColors.textPrimary, fontSize: 16)),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            if (subtitle.isNotEmpty)
-              Text(subtitle,
-                  style: TextStyle(
-                      color: AppColors.textSecondary, fontSize: 12)),
-            const SizedBox(height: 8),
-            Text(
-              'Bu bolgenin haritasini indirmek istiyor musunuz?',
-              style: TextStyle(color: AppColors.textSecondary, fontSize: 14),
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(ctx, false),
-              child: const Text('Iptal')),
-          FilledButton.icon(
-            onPressed: () => Navigator.pop(ctx, true),
-            icon: const Icon(Icons.download, size: 18),
-            label: const Text('Indir'),
-            style: FilledButton.styleFrom(backgroundColor: AppColors.primary),
-          ),
-        ],
-      ),
-    );
-
-    if (ok != true || !mounted) return;
-
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-      content: Text('$regionName indiriliyor...'),
-      duration: const Duration(seconds: 60),
-      backgroundColor: AppColors.surface,
-    ));
-
-    try {
-      final svc = ref.read(offlineMapServiceProvider);
-      await for (final p in svc.downloadRegion(
-        regionName: regionName,
-        north: region.north,
-        south: region.south,
-        east: region.east,
-        west: region.west,
-        minZoom: 6,
-        maxZoom: 12,
-      )) {
-        if (p >= 1.0) break;
-      }
-
-      final repo = ref.read(downloadedRegionsRepositoryProvider);
-      const sizeKiB = 0.0;
-      await repo.add(DownloadedRegion(
-        name: regionName,
-        subtitle: subtitle,
-        north: region.north,
-        south: region.south,
-        east: region.east,
-        west: region.west,
-        minZoom: 6,
-        maxZoom: 12,
-        downloadedAt: DateTime.now(),
-        sizeKiB: sizeKiB,
-      ));
-
-      ref.invalidate(hasDownloadedRegionsProvider);
-      ref.invalidate(downloadedRegionsListProvider);
-      repo.clearCache();
-
-      if (mounted) {
-        ScaffoldMessenger.of(context).clearSnackBars();
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text('$regionName indirildi'),
-          backgroundColor: AppColors.success,
-        ));
-        await _loadRegionsCache();
-        setState(() => _cameraInCoveredArea = true);
-        _regionBordersDrawn = false;
-        _regionBorderLines.clear();
-        _drawRegionBorders();
-      }
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).clearSnackBars();
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text('Indirme basarisiz: $e'),
-          backgroundColor: AppColors.error,
-        ));
-      }
-    }
   }
 
   // ── Search & route creation ───────────────────────────────────────
@@ -630,7 +477,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
     setState(() => _navState = _NavState.calculating);
 
     try {
-      final graphHopper = ref.read(_graphHopperProvider);
+      final graphHopper = ref.read(graphHopperSourceProvider);
       final route =
           await graphHopper.calculateRoute(_currentPosition, destination);
       if (!mounted) return;
@@ -758,8 +605,9 @@ class _MapScreenState extends ConsumerState<MapScreen> {
         _destCircle = null;
         _routeLine = null;
         _poiCircles.clear();
-        _regionBorderLines.clear();
-        _regionBordersDrawn = false;
+        _turkeyFills.clear();
+        _turkeyOutlines.clear();
+        _turkeyOverlayDrawn = false;
       });
     } catch (e) {
       debugPrint('MapScreen: style cycle failed: $e');
@@ -953,6 +801,16 @@ class _MapScreenState extends ConsumerState<MapScreen> {
     final isNavigating = _navState == _NavState.navigating;
     final isPreview = _navState == _NavState.preview;
     final hasRoute = _activeRoute != null;
+    final isLocationCovered = ref.watch(isCurrentLocationCoveredProvider);
+
+    // Keep the download banner in sync with pack installation state.
+    ref.listen<AsyncValue<bool>>(turkeyPackInstalledProvider, (_, next) {
+      next.whenData((installed) {
+        if (installed && _showMapDownloadBanner) {
+          setState(() => _showMapDownloadBanner = false);
+        }
+      });
+    });
 
     final displayRoute = hasRoute
         ? _activeRoute!.copyWith(
@@ -1136,8 +994,8 @@ class _MapScreenState extends ConsumerState<MapScreen> {
           // ── POI panel ─────────────────────────────────────────
           _buildPoiPanel(),
 
-          // ── Coverage warning ────────────────────────────────
-          if (!_cameraInCoveredArea && !isNavigating)
+          // ── Coverage warning (GPS outside Turkey coverage) ───
+          if (!isNavigating && !isLocationCovered && _gotFirstFix)
             Positioned(
               top: 60,
               left: 12,
@@ -1156,17 +1014,10 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                         const SizedBox(width: 8),
                         const Expanded(
                           child: Text(
-                            'Bu bolge icin harita indirilmemis',
+                            'Konumunuz offline harita kapsama alanı dışında',
                             style: TextStyle(
                                 color: Colors.white, fontSize: 13),
                           ),
-                        ),
-                        TextButton(
-                          onPressed: _downloadCurrentArea,
-                          child: const Text('Indir',
-                              style: TextStyle(
-                                  color: Colors.white,
-                                  fontWeight: FontWeight.bold)),
                         ),
                       ],
                     ),

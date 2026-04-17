@@ -61,3 +61,12 @@ android {
 flutter {
     source = "../.."
 }
+
+dependencies {
+    // GraphHopper offline routing engine (used via the Kotlin bridge in
+    // GraphHopperBridge.kt). Version 9.x targets Java 17+ and supports
+    // Android when using the core module only (no server bits).
+    implementation("com.graphhopper:graphhopper-core:9.1")
+    // SLF4J backend — GraphHopper logs via SLF4J and requires a binding.
+    implementation("org.slf4j:slf4j-simple:2.0.13")
+}

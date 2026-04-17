@@ -2,12 +2,12 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 
-import 'package:drivelink/core/database/downloaded_regions_repository.dart';
 import 'package:drivelink/core/database/settings_repository.dart';
 import 'package:drivelink/core/services/audio_service.dart';
 import 'package:drivelink/core/services/location_service.dart';
 import 'package:drivelink/core/services/steering_handler.dart';
 import 'package:drivelink/core/services/tts_service.dart';
+import 'package:drivelink/core/services/turkey_package_service.dart';
 import 'package:drivelink/features/ai/presentation/providers/ai_provider.dart';
 import 'package:drivelink/features/onboarding/presentation/screens/onboarding_screen.dart';
 import 'package:drivelink/features/settings/presentation/providers/theme_prefs_provider.dart';
@@ -111,7 +111,7 @@ class _DriveLinkAppState extends ConsumerState<DriveLinkApp>
   Widget build(BuildContext context) {
     ref.watch(steeringHandlerProvider);
 
-    final hasRegions = ref.watch(hasDownloadedRegionsProvider);
+    final hasRegions = ref.watch(turkeyPackInstalledProvider);
     final mapSkipped = ref.watch(_mapSkippedProvider);
     final themePrefs = ref.watch(themePrefsProvider).valueOrNull ??
         const ThemePrefs();

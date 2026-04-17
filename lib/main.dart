@@ -6,14 +6,19 @@ import 'package:wakelock_plus/wakelock_plus.dart';
 import 'app/app.dart';
 import 'core/database/database.dart';
 import 'core/database/database_provider.dart';
-import 'core/services/offline_map_service.dart';
+import 'core/services/map_asset_manager.dart';
 import 'core/services/permission_service.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  // Initialize MapLibre offline system (set high tile limit).
-  await OfflineMapService().initialize();
+  // Extract bundled map assets (glyphs + sprite) to the documents
+  // directory on first launch so MapLibre can reference them via file:// URLs.
+  try {
+    await MapAssetManager().ensureAssets();
+  } catch (e) {
+    debugPrint('Map asset extraction failed: $e');
+  }
 
   // Create the Drift database eagerly so it's ready for all providers.
   final database = AppDatabase();

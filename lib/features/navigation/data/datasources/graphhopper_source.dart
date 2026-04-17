@@ -1,229 +1,163 @@
-import 'dart:convert';
-import 'dart:io';
-import 'dart:math' as math;
+import 'dart:async';
 
 import 'package:flutter/foundation.dart';
-import 'package:http/http.dart' as http;
+import 'package:flutter/services.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:latlong2/latlong.dart';
 
-import 'package:drivelink/features/navigation/data/datasources/route_cache.dart';
+import 'package:drivelink/core/services/turkey_package_service.dart';
 import 'package:drivelink/features/navigation/domain/models/route_model.dart';
 import 'package:drivelink/features/navigation/domain/models/turn_instruction.dart';
 
-/// Max polyline points — longer routes are downsampled.
-const _maxPolylinePoints = 800;
+const _channel = MethodChannel('drivelink/graphhopper');
 
+/// Offline routing source backed by GraphHopper running natively on Android.
+///
+/// The heavy lifting (graph parsing, Dijkstra/CH) happens in
+/// `GraphHopperBridge.kt` — this Dart class only marshals requests and
+/// parses responses.
+///
+/// Lifecycle:
+///   * [ensureLoaded] — idempotent; unpacks `turkey.ghz` if needed, then
+///     calls the native `load` method. Safe to call repeatedly.
+///   * [calculateRoute] — routes between two points; returns a stub
+///     straight-line [RouteModel] if the graph isn't installed so the UI
+///     can still render a "no pack" state.
+///   * [close] — releases native resources (called when the pack is
+///     uninstalled).
 class GraphHopperSource {
-  GraphHopperSource({
-    this.osrmBaseUrl = 'https://router.project-osrm.org',
-  });
+  GraphHopperSource(this._pack);
 
-  final String osrmBaseUrl;
+  final TurkeyPackageService _pack;
 
-  final _cache = RouteCache();
+  bool _loaded = false;
+  Future<void>? _loadFuture;
+
+  Future<bool> ensureLoaded() async {
+    if (_loaded) return true;
+    _loadFuture ??= _load();
+    try {
+      await _loadFuture;
+      return _loaded;
+    } finally {
+      _loadFuture = null;
+    }
+  }
+
+  Future<void> _load() async {
+    final graphDir = await _pack.ensureGraphExtracted();
+    if (graphDir == null) {
+      debugPrint('GraphHopperSource: graph not installed — skipping load');
+      return;
+    }
+    try {
+      await _channel.invokeMethod<void>('load', {
+        'graphPath': graphDir,
+        'profile': 'car',
+      });
+      _loaded = true;
+      debugPrint('GraphHopperSource: loaded $graphDir');
+    } on PlatformException catch (e) {
+      debugPrint('GraphHopperSource load error: ${e.code} ${e.message}');
+    }
+  }
 
   Future<RouteModel> calculateRoute(LatLng start, LatLng end) async {
-    // Try online.
-    if (await _hasInternet()) {
-      try {
-        debugPrint('OSRM: ${start.latitude},${start.longitude} → ${end.latitude},${end.longitude}');
-        final route = await _fetch(start, end);
-        debugPrint('OSRM: ${route.polylinePoints.length} pts, ${route.formattedDistance}');
-        // Cache for offline use.
-        _cache.save(start, end, route);
-        return route;
-      } catch (e, st) {
-        debugPrint('OSRM failed: $e\n$st');
-      }
+    final ok = await ensureLoaded();
+    if (!ok) {
+      debugPrint('GraphHopperSource: no graph — returning stub');
+      return _stubRoute(start, end);
     }
 
-    // Try cached route.
-    final cached = await _cache.findNearby(start, end);
-    if (cached != null) {
-      debugPrint('OSRM: using cached route (${cached.polylinePoints.length} pts)');
-      return cached;
-    }
-
-    debugPrint('OSRM: offline, no cache — stub route');
-    return _stubRoute(start, end);
-  }
-
-  Future<bool> _hasInternet() async {
     try {
-      final r = await InternetAddress.lookup('router.project-osrm.org')
-          .timeout(const Duration(seconds: 3));
-      return r.isNotEmpty && r.first.rawAddress.isNotEmpty;
-    } catch (_) {
-      return false;
+      final raw = await _channel.invokeMapMethod<String, dynamic>('route', {
+        'fromLat': start.latitude,
+        'fromLng': start.longitude,
+        'toLat': end.latitude,
+        'toLng': end.longitude,
+        'profile': 'car',
+      });
+      if (raw == null) return _stubRoute(start, end);
+      return _parseRoute(raw);
+    } on PlatformException catch (e) {
+      debugPrint('GraphHopperSource route error: ${e.code} ${e.message}');
+      return _stubRoute(start, end);
     }
   }
 
-  Future<RouteModel> _fetch(LatLng start, LatLng end) async {
-    final coords =
-        '${start.longitude},${start.latitude};${end.longitude},${end.latitude}';
-    final url =
-        '$osrmBaseUrl/route/v1/driving/$coords'
-        '?overview=full&geometries=polyline&steps=true';
-
-    final response = await http
-        .get(Uri.parse(url))
-        .timeout(const Duration(seconds: 20));
-
-    if (response.statusCode != 200) {
-      throw Exception('HTTP ${response.statusCode}');
+  Future<void> close() async {
+    try {
+      await _channel.invokeMethod<void>('close');
+    } on PlatformException catch (e) {
+      debugPrint('GraphHopperSource close error: ${e.message}');
     }
-
-    // Parse in isolate to avoid jank on main thread.
-    return compute(_parseResponse, response.body);
+    _loaded = false;
   }
 
-  /// Top-level function for isolate — must not reference instance members.
-  static RouteModel _parseResponse(String body) {
-    final data = json.decode(body) as Map<String, dynamic>;
+  // ── Parsing ──────────────────────────────────────────────────────────
 
-    if (data['code'] != 'Ok') {
-      throw Exception('OSRM: ${data['code']} ${data['message'] ?? ''}');
+  RouteModel _parseRoute(Map<String, dynamic> raw) {
+    final distance = (raw['distanceMetres'] as num).toDouble();
+    final duration = (raw['durationSeconds'] as num).toDouble();
+    final flat = (raw['polyline'] as List).cast<num>();
+    final points = <LatLng>[];
+    for (var i = 0; i + 1 < flat.length; i += 2) {
+      points.add(LatLng(flat[i].toDouble(), flat[i + 1].toDouble()));
     }
-
-    final route = (data['routes'] as List).first as Map<String, dynamic>;
-    final distance = (route['distance'] as num).toDouble();
-    final duration = (route['duration'] as num).toDouble();
-
-    // Decode encoded polyline (compact string → List<LatLng>).
-    var polyline = _decodePolyline(route['geometry'] as String);
-
-    // Downsample if too many points.
-    if (polyline.length > _maxPolylinePoints) {
-      polyline = _downsample(polyline, _maxPolylinePoints);
-    }
-
-    // Parse turn instructions from steps.
-    final instructions = <TurnInstruction>[];
-    for (final leg in route['legs'] as List) {
-      for (final step in (leg as Map<String, dynamic>)['steps'] as List) {
-        final s = step as Map<String, dynamic>;
-        final m = s['maneuver'] as Map<String, dynamic>;
-        final type = m['type'] as String? ?? '';
-        if (type == 'depart') continue;
-
-        final modifier = m['modifier'] as String? ?? '';
-        instructions.add(TurnInstruction(
-          type: _mapManeuver(type, modifier),
-          distance: (s['distance'] as num).toDouble(),
-          streetName: s['name'] as String? ?? '',
-          exitNumber: (type == 'roundabout' || type == 'rotary')
-              ? m['exit'] as int?
-              : null,
-        ));
-      }
-    }
+    final instructionsRaw = (raw['instructions'] as List?) ?? const [];
+    final instructions = instructionsRaw
+        .cast<Map<Object?, Object?>>()
+        .map(_parseInstruction)
+        .toList();
 
     return RouteModel(
-      polylinePoints: polyline,
+      polylinePoints: points,
       distanceMetres: distance,
       durationSeconds: duration,
       turnInstructions: instructions,
     );
   }
 
-  static TurnType _mapManeuver(String type, String mod) {
-    if (type == 'arrive') return TurnType.arrive;
-    if (type == 'roundabout' || type == 'rotary') return TurnType.roundabout;
-    if (type == 'turn' || type == 'end of road' || type == 'fork') {
-      if (mod.contains('left')) return TurnType.turnLeft;
-      if (mod.contains('right')) return TurnType.turnRight;
-      if (mod.contains('uturn')) return TurnType.uturn;
-    }
-    if (type == 'merge') {
-      if (mod.contains('left')) return TurnType.mergeLeft;
-      if (mod.contains('right')) return TurnType.mergeRight;
-    }
-    return TurnType.continue_;
+  TurnInstruction _parseInstruction(Map<Object?, Object?> m) {
+    final sign = (m['sign'] as num?)?.toInt() ?? 0;
+    final name = (m['name'] as String?) ?? '';
+    final dist = (m['distanceMetres'] as num?)?.toDouble() ?? 0;
+    return TurnInstruction(
+      type: _turnTypeFromSign(sign),
+      distance: dist,
+      streetName: name,
+    );
   }
 
-  /// Decode Google-encoded polyline (precision 5).
-  static List<LatLng> _decodePolyline(String encoded) {
-    final points = <LatLng>[];
-    int i = 0, lat = 0, lng = 0;
-    while (i < encoded.length) {
-      int shift = 0, result = 0, b;
-      do { b = encoded.codeUnitAt(i++) - 63; result |= (b & 0x1F) << shift; shift += 5; } while (b >= 0x20);
-      lat += (result & 1) != 0 ? ~(result >> 1) : (result >> 1);
-      shift = 0; result = 0;
-      do { b = encoded.codeUnitAt(i++) - 63; result |= (b & 0x1F) << shift; shift += 5; } while (b >= 0x20);
-      lng += (result & 1) != 0 ? ~(result >> 1) : (result >> 1);
-      points.add(LatLng(lat / 1e5, lng / 1e5));
-    }
-    return points;
+  /// GraphHopper instruction sign codes → our [TurnType] enum.
+  /// Reference: https://github.com/graphhopper/graphhopper/blob/master/api/src/main/java/com/graphhopper/util/Instruction.java
+  TurnType _turnTypeFromSign(int sign) {
+    return switch (sign) {
+      -3 || -2 || -1 => TurnType.turnLeft,
+      1 || 2 || 3 => TurnType.turnRight,
+      0 => TurnType.continue_,
+      4 => TurnType.arrive,
+      6 => TurnType.roundabout,
+      -7 => TurnType.mergeLeft,
+      7 => TurnType.mergeRight,
+      -98 || -8 || 8 => TurnType.uturn,
+      _ => TurnType.continue_,
+    };
   }
 
-  /// Douglas-Peucker simplification — preserves corners/turns, removes
-  /// points on straight segments. Adjusts epsilon until under [max] points.
-  static List<LatLng> _downsample(List<LatLng> pts, int max) {
-    if (pts.length <= max) return pts;
+  // ── Stub ─────────────────────────────────────────────────────────────
 
-    double epsilon = 0.00005; // ~5m
-    var result = _douglasPeucker(pts, epsilon);
-
-    // Increase epsilon until we're under max.
-    while (result.length > max && epsilon < 0.01) {
-      epsilon *= 2;
-      result = _douglasPeucker(pts, epsilon);
-    }
-
-    return result;
-  }
-
-  static List<LatLng> _douglasPeucker(List<LatLng> pts, double epsilon) {
-    if (pts.length < 3) return pts;
-
-    double maxDist = 0;
-    int index = 0;
-    final first = pts.first;
-    final last = pts.last;
-
-    for (int i = 1; i < pts.length - 1; i++) {
-      final d = _perpDist(pts[i], first, last);
-      if (d > maxDist) {
-        maxDist = d;
-        index = i;
-      }
-    }
-
-    if (maxDist > epsilon) {
-      final left = _douglasPeucker(pts.sublist(0, index + 1), epsilon);
-      final right = _douglasPeucker(pts.sublist(index), epsilon);
-      return [...left.sublist(0, left.length - 1), ...right];
-    }
-
-    return [first, last];
-  }
-
-  /// Perpendicular distance from point to line (first→last) in degrees.
-  static double _perpDist(LatLng p, LatLng a, LatLng b) {
-    final dx = b.longitude - a.longitude;
-    final dy = b.latitude - a.latitude;
-    if (dx == 0 && dy == 0) {
-      final dlat = p.latitude - a.latitude;
-      final dlng = p.longitude - a.longitude;
-      return math.sqrt(dlat * dlat + dlng * dlng);
-    }
-    // Distance from point to line using cross product formula.
-    final num = ((p.longitude - a.longitude) * dy - (p.latitude - a.latitude) * dx).abs();
-    final den = math.sqrt(dx * dx + dy * dy);
-    return num / den;
-  }
-
-  RouteModel _stubRoute(LatLng start, LatLng end) {
-    final dist = const Distance().as(LengthUnit.Meter, start, end);
+  RouteModel _stubRoute(LatLng from, LatLng to) {
+    final dist = const Distance().as(LengthUnit.Meter, from, to);
     return RouteModel(
-      polylinePoints: [start, end],
+      polylinePoints: [from, to],
       distanceMetres: dist,
-      durationSeconds: dist / 13.9,
-      turnInstructions: [
-        TurnInstruction(type: TurnType.continue_, distance: dist, streetName: 'Rota hesaplanamadi'),
-        const TurnInstruction(type: TurnType.arrive, distance: 0, streetName: 'Hedef'),
-      ],
+      durationSeconds: dist / 13.9, // ~50 km/h fallback estimate
+      turnInstructions: const [],
     );
   }
 }
+
+final graphHopperSourceProvider = Provider<GraphHopperSource>((ref) {
+  return GraphHopperSource(ref.watch(turkeyPackageServiceProvider));
+});

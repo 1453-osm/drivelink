@@ -2,8 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'package:drivelink/app/theme/colors.dart';
-import 'package:drivelink/core/database/downloaded_regions_repository.dart';
 import 'package:drivelink/core/database/settings_repository.dart';
+import 'package:drivelink/core/services/turkey_package_service.dart';
 import 'package:drivelink/features/settings/presentation/screens/map_download_screen.dart';
 
 class OnboardingScreen extends ConsumerWidget {
@@ -102,7 +102,7 @@ class OnboardingScreen extends ConsumerWidget {
                 onPressed: () async {
                   final repo = ref.read(settingsRepositoryProvider);
                   await repo.set(SettingsKeys.mapSetupDone, 'skipped');
-                  ref.invalidate(hasDownloadedRegionsProvider);
+                  ref.invalidate(turkeyPackInstalledProvider);
                 },
                 child: Text(
                   'Haritasiz devam et',

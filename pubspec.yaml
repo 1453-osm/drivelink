@@ -43,6 +43,7 @@ dependencies:
 
   # HTTP
   http: ^1.2.2
+  crypto: ^3.0.6
 
   # AI & Voice
   vosk_flutter_service: ^0.1.0

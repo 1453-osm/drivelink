@@ -15,3 +15,10 @@
 
 # just_audio
 -keep class com.google.android.exoplayer2.** { *; }
+
+# GraphHopper offline routing — reflection-heavy, keep everything
+-keep class com.graphhopper.** { *; }
+-keep class com.carrotsearch.** { *; }
+-dontwarn com.graphhopper.**
+-dontwarn javax.xml.bind.**
+-dontwarn org.slf4j.**
