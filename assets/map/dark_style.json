@@ -1,0 +1,50 @@
+{
+  "version": 8,
+  "name": "DriveLink Dark",
+  "sources": {
+    "protomaps": {
+      "type": "vector",
+      "url": "{{TILE_URL}}",
+      "attribution": "<a href=\"https://protomaps.com\">Protomaps</a> © <a href=\"https://openstreetmap.org\">OpenStreetMap</a>"
+    }
+  },
+  "glyphs": "{{GLYPHS_URL}}/{fontstack}/{range}.pbf",
+  "sprite": "{{SPRITE_URL}}",
+  "layers": [
+    {"id":"background","type":"background","paint":{"background-color":"#14141A"}},
+    {"id":"earth","type":"fill","source":"protomaps","source-layer":"earth","paint":{"fill-color":"#1A1A24"}},
+
+    {"id":"landuse_park","type":"fill","source":"protomaps","source-layer":"landuse","filter":["in","kind","park","garden","playground"],"paint":{"fill-color":"#1C2A1C","fill-opacity":0.5}},
+    {"id":"landuse_grass","type":"fill","source":"protomaps","source-layer":"landuse","filter":["==","kind","grass"],"paint":{"fill-color":"#1C2418","fill-opacity":0.5}},
+    {"id":"landuse_forest","type":"fill","source":"protomaps","source-layer":"landuse","filter":["in","kind","forest","wood"],"paint":{"fill-color":"#1A2216","fill-opacity":0.5}},
+
+    {"id":"water","type":"fill","source":"protomaps","source-layer":"water","paint":{"fill-color":"#111828"}},
+
+    {"id":"buildings","type":"fill","source":"protomaps","source-layer":"buildings","minzoom":13,"paint":{"fill-color":"#1E1E2A","fill-opacity":{"stops":[[13,0],[15,0.6]]}}},
+    {"id":"buildings_outline","type":"line","source":"protomaps","source-layer":"buildings","minzoom":14,"paint":{"line-color":"#2A2A38","line-width":0.5}},
+
+    {"id":"boundaries_country","type":"line","source":"protomaps","source-layer":"boundaries","filter":["==","kind","country"],"paint":{"line-color":"#4A4A60","line-width":{"stops":[[2,0.5],[6,1.5],[10,2]]},"line-dasharray":[4,2]}},
+    {"id":"boundaries_state","type":"line","source":"protomaps","source-layer":"boundaries","filter":["==","kind","state"],"minzoom":4,"paint":{"line-color":"#3A3A50","line-width":0.8,"line-dasharray":[3,2]}},
+
+    {"id":"roads_trunk","type":"line","source":"protomaps","source-layer":"roads","filter":["in","kind","motorway","trunk"],"paint":{"line-color":"#263E6B","line-width":{"stops":[[6,0.5],[10,2],[14,7],[18,20]]}}},
+    {"id":"roads_primary","type":"line","source":"protomaps","source-layer":"roads","filter":["==","kind","primary"],"paint":{"line-color":"#2E3448","line-width":{"stops":[[8,0.3],[12,1.5],[16,6]]}}},
+    {"id":"roads_secondary","type":"line","source":"protomaps","source-layer":"roads","filter":["==","kind","secondary"],"minzoom":9,"paint":{"line-color":"#282838","line-width":{"stops":[[10,0.3],[14,1.5],[18,5]]}}},
+    {"id":"roads_tertiary","type":"line","source":"protomaps","source-layer":"roads","filter":["==","kind","tertiary"],"minzoom":11,"paint":{"line-color":"#252535","line-width":{"stops":[[12,0.3],[16,2],[18,4]]}}},
+    {"id":"roads_residential","type":"line","source":"protomaps","source-layer":"roads","filter":["in","kind","residential","living_street","unclassified"],"minzoom":12,"paint":{"line-color":"#222232","line-width":{"stops":[[13,0.3],[16,1.5],[18,3]]}}},
+    {"id":"roads_service","type":"line","source":"protomaps","source-layer":"roads","filter":["==","kind","service"],"minzoom":14,"paint":{"line-color":"#1E1E2E","line-width":{"stops":[[15,0.3],[18,2]]}}},
+    {"id":"roads_path","type":"line","source":"protomaps","source-layer":"roads","filter":["in","kind","path","footway","cycleway","pedestrian"],"minzoom":14,"paint":{"line-color":"#1E1E30","line-width":0.8,"line-dasharray":[2,2]}},
+    {"id":"roads_rail","type":"line","source":"protomaps","source-layer":"roads","filter":["==","kind","rail"],"minzoom":10,"paint":{"line-color":"#2A2A40","line-width":{"stops":[[10,0.5],[14,1.5]]},"line-dasharray":[4,4]}},
+
+    {"id":"places_country","type":"symbol","source":"protomaps","source-layer":"places","filter":["==","kind","country"],"minzoom":2,"maxzoom":8,"layout":{"text-field":"{name}","text-font":["Noto Sans Regular"],"text-size":{"stops":[[2,10],[6,16]]},"text-transform":"uppercase","text-letter-spacing":0.1,"text-max-width":8},"paint":{"text-color":"#8888AA","text-halo-color":"#14141A","text-halo-width":1.5}},
+    {"id":"places_state","type":"symbol","source":"protomaps","source-layer":"places","filter":["==","kind","state"],"minzoom":4,"maxzoom":10,"layout":{"text-field":"{name}","text-font":["Noto Sans Regular"],"text-size":{"stops":[[4,9],[8,13]]},"text-transform":"uppercase","text-letter-spacing":0.08},"paint":{"text-color":"#666688","text-halo-color":"#14141A","text-halo-width":1}},
+    {"id":"places_city","type":"symbol","source":"protomaps","source-layer":"places","filter":["==","kind","city"],"minzoom":5,"maxzoom":14,"layout":{"text-field":"{name}","text-font":["Noto Sans Medium"],"text-size":{"stops":[[5,10],[10,16],[14,20]]},"text-max-width":8},"paint":{"text-color":"#AAAACC","text-halo-color":"#14141A","text-halo-width":1.5}},
+    {"id":"places_town","type":"symbol","source":"protomaps","source-layer":"places","filter":["==","kind","town"],"minzoom":8,"layout":{"text-field":"{name}","text-font":["Noto Sans Regular"],"text-size":{"stops":[[8,10],[13,14]]},"text-max-width":7},"paint":{"text-color":"#8888AA","text-halo-color":"#14141A","text-halo-width":1}},
+    {"id":"places_village","type":"symbol","source":"protomaps","source-layer":"places","filter":["in","kind","village","hamlet"],"minzoom":11,"layout":{"text-field":"{name}","text-font":["Noto Sans Regular"],"text-size":{"stops":[[11,9],[15,12]]},"text-max-width":6},"paint":{"text-color":"#666680","text-halo-color":"#14141A","text-halo-width":1}},
+
+    {"id":"roads_label_major","type":"symbol","source":"protomaps","source-layer":"roads","filter":["in","kind","motorway","trunk","primary"],"minzoom":10,"layout":{"text-field":"{name}","text-font":["Noto Sans Regular"],"text-size":{"stops":[[10,9],[14,12]]},"symbol-placement":"line","text-rotation-alignment":"map"},"paint":{"text-color":"#7788AA","text-halo-color":"#14141A","text-halo-width":1}},
+    {"id":"roads_label_secondary","type":"symbol","source":"protomaps","source-layer":"roads","filter":["in","kind","secondary","tertiary"],"minzoom":13,"layout":{"text-field":"{name}","text-font":["Noto Sans Regular"],"text-size":{"stops":[[13,9],[16,11]]},"symbol-placement":"line","text-rotation-alignment":"map"},"paint":{"text-color":"#667788","text-halo-color":"#14141A","text-halo-width":1}},
+    {"id":"roads_label_minor","type":"symbol","source":"protomaps","source-layer":"roads","filter":["in","kind","residential","living_street","unclassified"],"minzoom":15,"layout":{"text-field":"{name}","text-font":["Noto Sans Regular"],"text-size":10,"symbol-placement":"line","text-rotation-alignment":"map"},"paint":{"text-color":"#555570","text-halo-color":"#14141A","text-halo-width":1}},
+
+    {"id":"water_label","type":"symbol","source":"protomaps","source-layer":"water","minzoom":8,"layout":{"text-field":"{name}","text-font":["Noto Sans Italic"],"text-size":{"stops":[[8,10],[14,14]]},"text-max-width":6},"paint":{"text-color":"#334466","text-halo-color":"#111828","text-halo-width":1}}
+  ]
+}

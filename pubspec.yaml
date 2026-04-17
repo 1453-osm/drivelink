@@ -1,0 +1,85 @@
+name: drivelink
+description: "Open-source car infotainment system — Eski aracini akilli yap"
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: ^3.10.4
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  # State Management
+  flutter_riverpod: ^2.6.1
+  riverpod_annotation: ^2.6.1
+
+  # Navigation
+  go_router: ^14.8.1
+
+  # Map & Navigation
+  latlong2: ^0.9.1
+  geolocator: ^13.0.2
+  flutter_compass: ^0.8.1
+
+  # USB Serial
+  usb_serial: ^0.5.2
+
+  # Database
+  drift: ^2.22.1
+  sqlite3_flutter_libs: ^0.5.28
+  path: ^1.9.1
+
+  # TTS & Audio
+  flutter_tts: ^4.2.0
+  audio_service: ^0.18.17
+  just_audio: ^0.9.43
+
+  # UI
+  fl_chart: ^0.70.2
+  syncfusion_flutter_gauges: ^28.2.3
+  google_fonts: ^6.2.1
+  flutter_animate: ^4.5.2
+
+  # HTTP
+  http: ^1.2.2
+
+  # AI & Voice
+  vosk_flutter_service: ^0.1.0
+  sherpa_onnx: ^1.12.34
+  archive: ^4.0.2
+  sensors_plus: ^4.0.0
+
+  # Utils
+  intl: ^0.20.2
+  path_provider: ^2.1.5
+  permission_handler: ^12.0.0
+  file_picker: ^8.1.4
+  connectivity_plus: ^6.1.4
+  wakelock_plus: ^1.2.10
+  maplibre_gl: ^0.25.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  build_runner: ^2.4.14
+  riverpod_generator: ^2.6.3
+  drift_dev: ^2.22.1
+  flutter_lints: ^6.0.0
+  flutter_launcher_icons: ^0.14.3
+
+flutter:
+  uses-material-design: true
+
+  assets:
+    - assets/icons/
+    - assets/images/
+    - assets/icon/
+    - assets/map/
+    - assets/map/glyphs/Noto Sans Regular/
+    - assets/map/glyphs/Noto Sans Medium/
+    - assets/map/glyphs/Noto Sans Italic/
+    - assets/map/sprite/
+    - assets/geo/
+    - assets/models/
+    - assets/tts/
