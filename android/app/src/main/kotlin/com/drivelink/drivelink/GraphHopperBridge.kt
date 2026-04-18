@@ -5,7 +5,6 @@ import com.graphhopper.GHResponse
 import com.graphhopper.GraphHopper
 import com.graphhopper.config.CHProfile
 import com.graphhopper.config.Profile
-import com.graphhopper.util.CustomModel
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
@@ -65,16 +64,23 @@ class GraphHopperBridge(engine: FlutterEngine) : MethodCallHandler {
         executor.execute {
             try {
                 hopper?.close()
+                // Force MMAP on every data access — default is RAM_STORE
+                // which puts the whole graph on the heap. Turkey's graph is
+                // hundreds of MB post-CH, which OOMs on Android even with
+                // largeHeap=true. MMAP backs storage with the OS page cache
+                // so heap stays tiny.
+                System.setProperty("graphhopper.graph.dataaccess.default_type", "MMAP")
+
+                // "shortest" weighting matches the one baked into the graph
+                // by build.py. We deliberately avoid weighting=custom
+                // because GraphHopper compiles custom-model expressions
+                // with Janino at runtime, which cannot load Android DEX
+                // class files ("Cannot compile expression: can't load this
+                // type of class file").
                 val gh = GraphHopper()
                 gh.graphHopperLocation = graphPath
-                // GraphHopper 9.x: vehicle field removed from Profile.
-                // The graph was imported with this profile name and a custom
-                // model; here we only reference it by name. Setting an empty
-                // custom model is enough — the graph already has the data.
                 gh.profiles = listOf(
-                    Profile(profile)
-                        .setWeighting("custom")
-                        .setCustomModel(CustomModel()),
+                    Profile(profile).setWeighting("shortest"),
                 )
                 gh.chPreparationHandler.setCHProfiles(CHProfile(profile))
                 gh.importOrLoad()

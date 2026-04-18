@@ -215,19 +215,16 @@ def build_graph(ctx: BuildContext) -> None:
 
 
 def _graphhopper_config_yaml(ctx: BuildContext, cache: Path) -> str:
-    # GraphHopper 9.x: profiles use custom_model instead of the old
-    # (vehicle, weighting) pair. A minimal inline model mimicking the
-    # classic "car/fastest" behaviour is good enough as a default.
+    # IMPORTANT: do NOT use weighting=custom / custom_model on Android.
+    # GraphHopper compiles custom-model expressions at runtime with Janino,
+    # which can't load Android's DEX class files → "Cannot compile
+    # expression". Plain "shortest" weighting needs no expression compiler
+    # and routes fine on car graphs; distance-optimised routing is
+    # acceptable for our use case.
     profiles_yaml = "\n".join(
         (
             f"    - name: {p['name']}\n"
-            f"      custom_model:\n"
-            f"        priority:\n"
-            f"          - if: 'road_class == MOTORWAY'\n"
-            f"            multiply_by: 1.0\n"
-            f"        speed:\n"
-            f"          - if: 'true'\n"
-            f"            limit_to: 'car_average_speed'\n"
+            f"      weighting: shortest\n"
         )
         for p in ctx.config["graph"]["profiles"]
     )
@@ -235,8 +232,6 @@ def _graphhopper_config_yaml(ctx: BuildContext, cache: Path) -> str:
         "graphhopper:\n"
         f"  datareader.file: {ctx.pbf_path}\n"
         f"  graph.location: {cache}\n"
-        # GraphHopper 9.x: declare every encoded value referenced by any
-        # custom model up-front, or prepareImport() refuses to start.
         "  graph.encoded_values: road_class, car_average_speed\n"
         "  import.osm.ignored_highways: footway,cycleway,path,pedestrian,steps\n"
         "  profiles:\n"
