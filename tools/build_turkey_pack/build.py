@@ -215,16 +215,19 @@ def build_graph(ctx: BuildContext) -> None:
 
 
 def _graphhopper_config_yaml(ctx: BuildContext, cache: Path) -> str:
-    # IMPORTANT: do NOT use weighting=custom / custom_model on Android.
-    # GraphHopper compiles custom-model expressions at runtime with Janino,
-    # which can't load Android's DEX class files → "Cannot compile
-    # expression". Plain "shortest" weighting needs no expression compiler
-    # and routes fine on car graphs; distance-optimised routing is
-    # acceptable for our use case.
+    # IMPORTANT: do NOT use weighting=custom on Android. GraphHopper
+    # compiles custom-model expressions with Janino, which can't load
+    # Android's DEX class files → "Cannot compile expression".
+    #
+    # But GraphHopper 9.x's prepareImport() still walks each profile's
+    # custom_model regardless of the weighting and NPEs when the field
+    # is null. So we set weighting=shortest AND an explicit empty
+    # custom_model {} to give it something non-null to iterate over.
     profiles_yaml = "\n".join(
         (
             f"    - name: {p['name']}\n"
             f"      weighting: shortest\n"
+            f"      custom_model: {{}}\n"
         )
         for p in ctx.config["graph"]["profiles"]
     )

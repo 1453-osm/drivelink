@@ -105,7 +105,8 @@
       "Bash(git -c core.autocrlf=input commit -m 'docs\\(claude-md\\): reflect offline pack architecture and new tooling *)",
       "Bash(git -c core.autocrlf=input commit -m 'feat\\(download\\): move download state onto service so it survives nav/background *)",
       "Bash(git -c core.autocrlf=input commit -m 'feat\\(routing\\): surface real reason when GraphHopper falls back to straight-line *)",
-      "Bash(git -c core.autocrlf=input commit -m 'fix\\(routing\\): use shortest weighting to avoid Janino on Android *)"
+      "Bash(git -c core.autocrlf=input commit -m 'fix\\(routing\\): use shortest weighting to avoid Janino on Android *)",
+      "Bash(git -c core.autocrlf=input commit -m 'fix\\(build\\): supply empty custom_model {} so GraphHopper 9.x doesn'\\\\''t NPE *)"
     ]
   }
 }
