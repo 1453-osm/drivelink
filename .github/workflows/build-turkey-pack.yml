@@ -83,6 +83,31 @@ jobs:
           echo "Downloading $URL"
           curl -fL -o "tools/build_turkey_pack/bin/graphhopper-web-${GH_VERSION}.jar" "$URL"
 
+      - name: Pre-download OSM coastline sources (flaky mirror)
+        # osmdata.openstreetmap.de's Apache server frequently times out on
+        # Planetiler's HEAD size-check. curl can retry far more robustly,
+        # and Planetiler will happily reuse whatever is already in
+        # data/sources/ (refresh_* defaults to false).
+        run: |
+          set -e
+          mkdir -p tools/build_turkey_pack/data/sources
+          for url in \
+            "https://osmdata.openstreetmap.de/download/water-polygons-split-3857.zip" \
+            "https://osmdata.openstreetmap.de/download/land-polygons-split-3857.zip"; do
+            filename=$(basename "$url")
+            dest="tools/build_turkey_pack/data/sources/$filename"
+            if [ -s "$dest" ]; then
+              echo "Skip $filename (already present, $(stat -c%s "$dest") bytes)"
+              continue
+            fi
+            echo "Downloading $filename with curl retry…"
+            curl -fL --retry 10 --retry-all-errors --retry-delay 30 \
+              --connect-timeout 30 --max-time 900 \
+              -o "$dest" "$url"
+            echo "  → $(stat -c%s "$dest") bytes"
+          done
+          ls -la tools/build_turkey_pack/data/sources/
+
       - name: Run build (with retry on transient download failures)
         env:
           BASE_URL: https://github.com/${{ github.repository }}/releases/download/turkey-pack-${{ env.PACK_VERSION }}
@@ -120,8 +145,8 @@ jobs:
               echo "Build succeeded on attempt $attempt"
               exit 0
             fi
-            echo "Attempt $attempt failed (exit $rc); retrying in 30s…"
-            sleep 30
+            echo "Attempt $attempt failed (exit $rc); retrying in 120s…"
+            sleep 120
           done
           echo "All attempts failed"
           exit 1
