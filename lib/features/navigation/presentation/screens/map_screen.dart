@@ -490,10 +490,13 @@ class _MapScreenState extends ConsumerState<MapScreen> {
       });
 
       if (route.polylinePoints.length <= 2 && mounted) {
+        final fallback = graphHopper.lastFallback;
+        final reason = fallback.message ?? 'Rota motoru hazır değil';
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Internet baglantisi yok — gercek rota hesaplanamadi'),
+            content: Text('$reason — düz çizgi gösteriliyor'),
             backgroundColor: AppColors.warning,
+            duration: const Duration(seconds: 5),
           ),
         );
       }

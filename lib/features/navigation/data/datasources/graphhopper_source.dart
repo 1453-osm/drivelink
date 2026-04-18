@@ -25,6 +25,33 @@ const _channel = MethodChannel('drivelink/graphhopper');
 ///     can still render a "no pack" state.
 ///   * [close] — releases native resources (called when the pack is
 ///     uninstalled).
+/// Describes why the last routing attempt fell back to a straight-line stub,
+/// so the UI can surface a useful error message to the user.
+enum RoutingFallbackReason {
+  /// Everything is fine — returned by the normal path.
+  none,
+
+  /// The Turkey pack isn't installed yet (or the .ghz hasn't been unpacked).
+  graphNotInstalled,
+
+  /// Native GraphHopper failed to load the graph (error detail in message).
+  graphLoadFailed,
+
+  /// `route()` itself threw (e.g. no path between the two points).
+  routeFailed,
+}
+
+class RoutingFallback {
+  const RoutingFallback(this.reason, [this.message]);
+  final RoutingFallbackReason reason;
+  final String? message;
+
+  @override
+  String toString() => message ?? reason.name;
+
+  static const none = RoutingFallback(RoutingFallbackReason.none);
+}
+
 class GraphHopperSource {
   GraphHopperSource(this._pack);
 
@@ -32,6 +59,10 @@ class GraphHopperSource {
 
   bool _loaded = false;
   Future<void>? _loadFuture;
+
+  /// Why the most recent call fell back to a stub. Read by the UI to
+  /// show the user a meaningful error instead of "no internet".
+  RoutingFallback lastFallback = RoutingFallback.none;
 
   Future<bool> ensureLoaded() async {
     if (_loaded) return true;
@@ -47,6 +78,10 @@ class GraphHopperSource {
   Future<void> _load() async {
     final graphDir = await _pack.ensureGraphExtracted();
     if (graphDir == null) {
+      lastFallback = const RoutingFallback(
+        RoutingFallbackReason.graphNotInstalled,
+        'Türkiye paketi yüklü değil — önce indir',
+      );
       debugPrint('GraphHopperSource: graph not installed — skipping load');
       return;
     }
@@ -56,16 +91,25 @@ class GraphHopperSource {
         'profile': 'car',
       });
       _loaded = true;
+      lastFallback = RoutingFallback.none;
       debugPrint('GraphHopperSource: loaded $graphDir');
     } on PlatformException catch (e) {
-      debugPrint('GraphHopperSource load error: ${e.code} ${e.message}');
+      final details = e.details is String ? e.details as String : '';
+      final msg = [e.message, if (details.isNotEmpty) details.split('\n').first]
+          .whereType<String>()
+          .join(' — ');
+      lastFallback = RoutingFallback(
+        RoutingFallbackReason.graphLoadFailed,
+        'Rota motoru yüklenemedi: $msg',
+      );
+      debugPrint('GraphHopperSource load error: ${e.code} ${e.message}\n${e.details}');
     }
   }
 
   Future<RouteModel> calculateRoute(LatLng start, LatLng end) async {
     final ok = await ensureLoaded();
     if (!ok) {
-      debugPrint('GraphHopperSource: no graph — returning stub');
+      debugPrint('GraphHopperSource: no graph — returning stub (${lastFallback.reason})');
       return _stubRoute(start, end);
     }
 
@@ -77,10 +121,22 @@ class GraphHopperSource {
         'toLng': end.longitude,
         'profile': 'car',
       });
-      if (raw == null) return _stubRoute(start, end);
+      if (raw == null) {
+        lastFallback = const RoutingFallback(
+          RoutingFallbackReason.routeFailed,
+          'Rota bulunamadı',
+        );
+        return _stubRoute(start, end);
+      }
+      lastFallback = RoutingFallback.none;
       return _parseRoute(raw);
     } on PlatformException catch (e) {
-      debugPrint('GraphHopperSource route error: ${e.code} ${e.message}');
+      final msg = e.message ?? e.code;
+      lastFallback = RoutingFallback(
+        RoutingFallbackReason.routeFailed,
+        'Rota hesaplanamadı: $msg',
+      );
+      debugPrint('GraphHopperSource route error: ${e.code} ${e.message}\n${e.details}');
       return _stubRoute(start, end);
     }
   }

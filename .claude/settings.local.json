@@ -103,7 +103,8 @@
       "Bash(gh api *)",
       "Bash(git -c core.autocrlf=input commit -m ' *)",
       "Bash(git -c core.autocrlf=input commit -m 'docs\\(claude-md\\): reflect offline pack architecture and new tooling *)",
-      "Bash(git -c core.autocrlf=input commit -m 'feat\\(download\\): move download state onto service so it survives nav/background *)"
+      "Bash(git -c core.autocrlf=input commit -m 'feat\\(download\\): move download state onto service so it survives nav/background *)",
+      "Bash(git -c core.autocrlf=input commit -m 'feat\\(routing\\): surface real reason when GraphHopper falls back to straight-line *)"
     ]
   }
 }
