@@ -61,3 +61,6 @@ packages/flutter_llama/.cxx/
 tools/build_turkey_pack/bin/
 tools/build_turkey_pack/output/
 tools/build_turkey_pack/__pycache__/
+
+# Temporary OSM mirror downloads
+tmp-osm/

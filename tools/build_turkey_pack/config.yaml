@@ -14,7 +14,7 @@ source:
 # ─── External tools (must exist under bin/ relative to this config) ─────
 tools:
   java: java
-  protomaps_jar: bin/protomaps-basemaps.jar
+  basemap_jar: bin/drivelink-basemap.jar
   graphhopper_jar: bin/graphhopper-web-9.1.jar
   pmtiles_cli: bin/pmtiles
   osmium: osmium

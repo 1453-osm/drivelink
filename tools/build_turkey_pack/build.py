@@ -137,8 +137,8 @@ def build_pmtiles(ctx: BuildContext) -> None:
         return
 
     tools = ctx.config["tools"]
-    jar = HERE / tools["protomaps_jar"]
-    require_file("Protomaps basemaps JAR", jar)
+    jar = HERE / tools["basemap_jar"]
+    require_file("DriveLink basemap JAR", jar)
     require_tool("java", tools["java"])
 
     heap = ctx.config["pmtiles"]["java_heap"]
@@ -147,13 +147,9 @@ def build_pmtiles(ctx: BuildContext) -> None:
 
     ctx.pmtiles_path.parent.mkdir(parents=True, exist_ok=True)
 
-    # Protomaps basemaps CLI uses key=value flags (Planetiler-style).
-    # - --download: fetch Natural Earth, water/land polygons, etc.
-    # - --osm_path: local OSM PBF (we already downloaded Turkey above)
-    # - --output: PMTiles destination
-    # - --force: overwrite existing output
-    # We don't supply a landcover path → the landcover layer is skipped
-    # (Daylight landcover is multi-GB and doesn't fit GitHub runner disk).
+    # Our custom Planetiler profile. Only downloads Natural Earth (small,
+    # ~50 MB) from the reliable naciscdn.org server; no OSM coastline or
+    # Daylight landcover fetches.
     cmd = [
         tools["java"],
         f"-Xmx{heap}",

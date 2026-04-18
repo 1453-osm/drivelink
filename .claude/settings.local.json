@@ -89,7 +89,18 @@
       "Bash(python /c/Users/Osman/projeler/drivelink/debug_fix2.py)",
       "Bash(python *)",
       "Bash(git -C \"C:\\\\Users\\\\Osman\\\\projeler\\\\drivelink\" checkout -- lib/)",
-      "WebFetch(domain:maplibre.org)"
+      "WebFetch(domain:maplibre.org)",
+      "Bash(gh auth *)",
+      "Bash(gh workflow *)",
+      "Bash(gh run *)",
+      "Bash(git add *)",
+      "Bash(git -c core.autocrlf=input commit -m 'fix\\(build-script\\): graphhopper import uses positional config arg *)",
+      "Bash(git push *)",
+      "Bash(git -c core.autocrlf=input commit -m 'ci: retry build up to 3 times on transient download timeouts *)",
+      "Bash(git -c core.autocrlf=input commit -m 'fix\\(build-script\\): declare graph.encoded_values for GraphHopper 9.x *)",
+      "Bash(git -c core.autocrlf=input commit -m 'ci: pre-download OSM coastline sources with curl retry *)",
+      "Bash(gh release *)",
+      "Bash(gh api *)"
     ]
   }
 }

@@ -57,24 +57,24 @@ jobs:
       - name: Prepare bin/
         run: mkdir -p tools/build_turkey_pack/bin
 
-      - name: Cache Protomaps basemaps JAR
-        id: cache-pm
+      - name: Cache DriveLink basemap JAR
+        id: cache-basemap
         uses: actions/cache@v4
         with:
-          path: tools/build_turkey_pack/bin/protomaps-basemaps.jar
-          key: protomaps-basemaps-${{ hashFiles('.github/workflows/build-turkey-pack.yml') }}
+          path: tools/build_turkey_pack/bin/drivelink-basemap.jar
+          key: drivelink-basemap-${{ hashFiles('tools/drivelink_basemap/**') }}
 
-      - name: Build Protomaps basemaps JAR
-        if: steps.cache-pm.outputs.cache-hit != 'true'
+      - name: Build DriveLink basemap JAR
+        if: steps.cache-basemap.outputs.cache-hit != 'true'
+        # Our own minimal Planetiler profile (tools/drivelink_basemap/).
+        # Depends only on planetiler-core + Natural Earth (auto-downloaded
+        # from naciscdn.org). No OSM coastline / Daylight landcover needed.
         run: |
           set -e
-          git clone --depth 1 https://github.com/protomaps/basemaps /tmp/basemaps
-          cd /tmp/basemaps/tiles
+          cd tools/drivelink_basemap
           mvn -B -q package -DskipTests
-          # Pick the shaded JAR (has dependencies) — its filename includes the
-          # project artifactId; glob to stay agnostic of the version suffix.
-          JAR=$(ls target/*-with-dependencies.jar 2>/dev/null || ls target/*.jar | grep -v 'original' | head -n 1)
-          cp "$JAR" "$GITHUB_WORKSPACE/tools/build_turkey_pack/bin/protomaps-basemaps.jar"
+          cp target/drivelink-basemap.jar "$GITHUB_WORKSPACE/tools/build_turkey_pack/bin/drivelink-basemap.jar"
+          ls -la "$GITHUB_WORKSPACE/tools/build_turkey_pack/bin/"
 
       - name: Download GraphHopper web JAR
         run: |
@@ -82,31 +82,6 @@ jobs:
           URL="https://github.com/graphhopper/graphhopper/releases/download/${GH_VERSION}/graphhopper-web-${GH_VERSION}.jar"
           echo "Downloading $URL"
           curl -fL -o "tools/build_turkey_pack/bin/graphhopper-web-${GH_VERSION}.jar" "$URL"
-
-      - name: Pre-download OSM coastline sources (flaky mirror)
-        # osmdata.openstreetmap.de's Apache server frequently times out on
-        # Planetiler's HEAD size-check. curl can retry far more robustly,
-        # and Planetiler will happily reuse whatever is already in
-        # data/sources/ (refresh_* defaults to false).
-        run: |
-          set -e
-          mkdir -p tools/build_turkey_pack/data/sources
-          for url in \
-            "https://osmdata.openstreetmap.de/download/water-polygons-split-3857.zip" \
-            "https://osmdata.openstreetmap.de/download/land-polygons-split-3857.zip"; do
-            filename=$(basename "$url")
-            dest="tools/build_turkey_pack/data/sources/$filename"
-            if [ -s "$dest" ]; then
-              echo "Skip $filename (already present, $(stat -c%s "$dest") bytes)"
-              continue
-            fi
-            echo "Downloading $filename with curl retry…"
-            curl -fL --retry 10 --retry-all-errors --retry-delay 30 \
-              --connect-timeout 30 --max-time 900 \
-              -o "$dest" "$url"
-            echo "  → $(stat -c%s "$dest") bytes"
-          done
-          ls -la tools/build_turkey_pack/data/sources/
 
       - name: Run build (with retry on transient download failures)
         env:
