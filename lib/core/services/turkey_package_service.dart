@@ -183,6 +183,57 @@ class ManifestNotPublishedException implements Exception {
       'Henüz yayınlanmış Türkiye paketi yok — GitHub Release oluşturulmalı';
 }
 
+/// Lifecycle phase of an in-flight (or just-finished) download.
+enum DownloadPhase {
+  /// No download in progress; nothing to report.
+  idle,
+
+  /// HTTP streams are active — [DownloadProgress.progress] is meaningful.
+  downloading,
+
+  /// All assets downloaded, verified and renamed into place.
+  completed,
+
+  /// Download stopped due to cancellation or an error — check [error].
+  failed,
+}
+
+/// Snapshot of the current download state. Outlives the UI — lives on the
+/// [TurkeyPackageService] singleton so that backgrounding / popping the
+/// download screen doesn't cancel the transfer.
+@immutable
+class DownloadProgress {
+  const DownloadProgress({
+    required this.phase,
+    this.progress = 0.0,
+    this.bytesReceived = 0,
+    this.bytesTotal = 0,
+    this.manifest,
+    this.error,
+  });
+
+  final DownloadPhase phase;
+
+  /// Monotonically non-decreasing 0.0 → 1.0.
+  final double progress;
+
+  /// Total bytes received so far across all assets.
+  final int bytesReceived;
+
+  /// Sum of all asset sizes from the manifest. 0 when unknown.
+  final int bytesTotal;
+
+  /// Manifest the download is based on (null when idle).
+  final TurkeyPackManifest? manifest;
+
+  /// Populated when [phase] is [DownloadPhase.failed].
+  final Object? error;
+
+  bool get isActive => phase == DownloadPhase.downloading;
+
+  static const idle = DownloadProgress(phase: DownloadPhase.idle);
+}
+
 /// Manages the single Turkey offline pack: manifest fetch, download, verify,
 /// install, uninstall.
 class TurkeyPackageService {
@@ -192,6 +243,28 @@ class TurkeyPackageService {
   final http.Client _http;
   Directory? _packDir;
   bool _cancelled = false;
+
+  /// Current download state — survives widget disposal + navigation.
+  DownloadProgress _progress = DownloadProgress.idle;
+  final StreamController<DownloadProgress> _progressController =
+      StreamController<DownloadProgress>.broadcast();
+
+  /// Synchronous snapshot of [progressStream].
+  DownloadProgress get progress => _progress;
+
+  /// Broadcasts every state change. Listeners may come and go freely —
+  /// the service keeps running. Consumers should also seed themselves
+  /// with [progress] on subscribe, since broadcast streams don't replay.
+  Stream<DownloadProgress> get progressStream => _progressController.stream;
+
+  /// Future completed when the currently-active download finishes (or
+  /// fails). null when nothing is running.
+  Future<void>? _activeDownload;
+
+  void _emit(DownloadProgress p) {
+    _progress = p;
+    if (!_progressController.isClosed) _progressController.add(p);
+  }
 
   Future<Directory> _ensurePackDir() async {
     final cached = _packDir;
@@ -340,76 +413,117 @@ class TurkeyPackageService {
     return TurkeyPackManifest.fromJson(json);
   }
 
-  /// Downloads and verifies all pack components.
+  /// Start (or rejoin) a Turkey pack download.
   ///
-  /// Emits a monotonically non-decreasing progress value in [0.0, 1.0].
-  /// Throws [DownloadCancelledException] if [cancel] is invoked.
-  /// Throws [DownloadVerificationException] on hash mismatch.
-  Stream<double> download(TurkeyPackManifest manifest) {
+  /// If a download is already in flight, this call joins the existing
+  /// future instead of starting a second one — calling this method is
+  /// safe and idempotent from any number of UI callbacks.
+  ///
+  /// State updates flow through [progressStream] / [progress]; this
+  /// method's returned Future completes when the active download ends
+  /// (success, cancel, or error). Errors are surfaced both on the
+  /// progress stream (phase=failed) and by throwing from the future.
+  Future<void> startDownload(TurkeyPackManifest manifest) {
+    final active = _activeDownload;
+    if (active != null) return active;
+
     _cancelled = false;
-    final controller = StreamController<double>();
+    _emit(DownloadProgress(
+      phase: DownloadPhase.downloading,
+      progress: 0,
+      bytesReceived: 0,
+      bytesTotal: manifest.totalBytes,
+      manifest: manifest,
+    ));
 
-    () async {
-      try {
-        final dir = await _ensurePackDir();
-        final totalBytes = manifest.totalBytes;
-        var bytesBefore = 0;
+    final future = _runDownload(manifest).whenComplete(() {
+      _activeDownload = null;
+    });
+    _activeDownload = future;
+    return future;
+  }
 
-        for (final asset in manifest.assets) {
-          if (_cancelled) throw const DownloadCancelledException();
+  Future<void> _runDownload(TurkeyPackManifest manifest) async {
+    try {
+      final dir = await _ensurePackDir();
+      final totalBytes = manifest.totalBytes;
+      var bytesBefore = 0;
 
-          final partFile = File(p.join(dir.path, '${asset.filename}.part'));
-          if (await partFile.exists()) await partFile.delete();
+      for (final asset in manifest.assets) {
+        if (_cancelled) throw const DownloadCancelledException();
 
-          await _downloadAssetTo(
-            asset,
-            partFile,
-            onReceived: (received) {
-              if (totalBytes > 0) {
-                final done = (bytesBefore + received) / totalBytes;
-                controller.add(done.clamp(0.0, 0.99));
-              }
-            },
-          );
+        final partFile = File(p.join(dir.path, '${asset.filename}.part'));
+        if (await partFile.exists()) await partFile.delete();
 
-          if (_cancelled) {
-            await partFile.delete().catchError((_) => partFile);
-            throw const DownloadCancelledException();
-          }
+        await _downloadAssetTo(
+          asset,
+          partFile,
+          onReceived: (received) {
+            final total = bytesBefore + received;
+            _emit(DownloadProgress(
+              phase: DownloadPhase.downloading,
+              progress: totalBytes > 0
+                  ? (total / totalBytes).clamp(0.0, 0.99)
+                  : 0.0,
+              bytesReceived: total,
+              bytesTotal: totalBytes,
+              manifest: manifest,
+            ));
+          },
+        );
 
-          // Verify SHA-256.
-          final actualHash = await _sha256(partFile);
-          if (actualHash.toLowerCase() != asset.sha256.toLowerCase()) {
-            await partFile.delete().catchError((_) => partFile);
-            throw DownloadVerificationException(
-              asset.name,
-              asset.sha256,
-              actualHash,
-            );
-          }
-
-          // Atomic rename .part → final.
-          final finalFile = File(p.join(dir.path, asset.filename));
-          if (await finalFile.exists()) await finalFile.delete();
-          await partFile.rename(finalFile.path);
-
-          bytesBefore += asset.sizeBytes;
+        if (_cancelled) {
+          await partFile.delete().catchError((_) => partFile);
+          throw const DownloadCancelledException();
         }
 
-        // Persist manifest for version tracking + provenance.
-        await File(p.join(dir.path, turkeyManifestFilename))
-            .writeAsString(jsonEncode(manifest.toJson()));
+        final actualHash = await _sha256(partFile);
+        if (actualHash.toLowerCase() != asset.sha256.toLowerCase()) {
+          await partFile.delete().catchError((_) => partFile);
+          throw DownloadVerificationException(
+            asset.name,
+            asset.sha256,
+            actualHash,
+          );
+        }
 
-        controller.add(1.0);
-      } catch (e, st) {
-        debugPrint('TurkeyPackageService.download error: $e\n$st');
-        controller.addError(e);
-      } finally {
-        await controller.close();
+        final finalFile = File(p.join(dir.path, asset.filename));
+        if (await finalFile.exists()) await finalFile.delete();
+        await partFile.rename(finalFile.path);
+
+        bytesBefore += asset.sizeBytes;
       }
-    }();
 
-    return controller.stream;
+      await File(p.join(dir.path, turkeyManifestFilename))
+          .writeAsString(jsonEncode(manifest.toJson()));
+
+      _emit(DownloadProgress(
+        phase: DownloadPhase.completed,
+        progress: 1.0,
+        bytesReceived: manifest.totalBytes,
+        bytesTotal: manifest.totalBytes,
+        manifest: manifest,
+      ));
+    } catch (e, st) {
+      debugPrint('TurkeyPackageService._runDownload error: $e\n$st');
+      _emit(DownloadProgress(
+        phase: DownloadPhase.failed,
+        progress: _progress.progress,
+        bytesReceived: _progress.bytesReceived,
+        bytesTotal: manifest.totalBytes,
+        manifest: manifest,
+        error: e,
+      ));
+      rethrow;
+    }
+  }
+
+  /// Reset the reported state back to [DownloadProgress.idle] — use this
+  /// after the user has acknowledged a `completed` / `failed` state and
+  /// wants a clean slate (e.g. after uninstalling, or to retry).
+  void resetDownloadState() {
+    if (_activeDownload != null) return; // can't reset while running
+    _emit(DownloadProgress.idle);
   }
 
   /// Streams a single asset's bytes to [out], reporting cumulative received
@@ -481,4 +595,13 @@ final turkeyPackInfoProvider = FutureProvider<TurkeyPackInfo>((ref) async {
 final turkeyPackInstalledProvider = FutureProvider<bool>((ref) async {
   final svc = ref.watch(turkeyPackageServiceProvider);
   return svc.isInstalled();
+});
+
+/// Live download progress. Survives widget rebuilds — the underlying
+/// state lives on the service singleton.
+final turkeyPackDownloadProgressProvider =
+    StreamProvider<DownloadProgress>((ref) async* {
+  final svc = ref.watch(turkeyPackageServiceProvider);
+  yield svc.progress;
+  yield* svc.progressStream;
 });

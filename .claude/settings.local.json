@@ -100,7 +100,10 @@
       "Bash(git -c core.autocrlf=input commit -m 'fix\\(build-script\\): declare graph.encoded_values for GraphHopper 9.x *)",
       "Bash(git -c core.autocrlf=input commit -m 'ci: pre-download OSM coastline sources with curl retry *)",
       "Bash(gh release *)",
-      "Bash(gh api *)"
+      "Bash(gh api *)",
+      "Bash(git -c core.autocrlf=input commit -m ' *)",
+      "Bash(git -c core.autocrlf=input commit -m 'docs\\(claude-md\\): reflect offline pack architecture and new tooling *)",
+      "Bash(git -c core.autocrlf=input commit -m 'feat\\(download\\): move download state onto service so it survives nav/background *)"
     ]
   }
 }

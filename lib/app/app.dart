@@ -88,7 +88,15 @@ class _DriveLinkAppState extends ConsumerState<DriveLinkApp>
     switch (state) {
       case AppLifecycleState.paused:
       case AppLifecycleState.inactive:
-        WakelockPlus.disable();
+        // Keep the CPU awake while an offline-pack download is in flight
+        // so streaming HTTP doesn't stall when the user backgrounds the app.
+        final downloadActive = ref
+            .read(turkeyPackageServiceProvider)
+            .progress
+            .isActive;
+        if (!downloadActive) {
+          WakelockPlus.disable();
+        }
         locationService.stopListening();
         // Pause wake word when backgrounded
         aiService.toggleWakeWord(false);

@@ -1,15 +1,16 @@
-import 'dart:async';
-
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'package:drivelink/app/theme/colors.dart';
 import 'package:drivelink/core/services/turkey_package_service.dart'
     show
+        DownloadPhase,
+        DownloadProgress,
         ManifestNotPublishedException,
         TurkeyPackInfo,
         TurkeyPackManifest,
         TurkeyPackStatus,
+        turkeyPackDownloadProgressProvider,
         turkeyPackInfoProvider,
         turkeyPackInstalledProvider,
         turkeyPackageServiceProvider;
@@ -17,11 +18,10 @@ import 'package:drivelink/shared/widgets/responsive_page_body.dart';
 
 /// Single-pack Turkey download screen.
 ///
-/// Workflow:
-///   1. Fetch remote manifest (version, sizes, SHA-256).
-///   2. User taps "İndir" → stream download with progress.
-///   3. Verify hashes, atomic install to app documents directory.
-///   4. User can uninstall / re-download.
+/// All long-lived download state (progress, phase, manifest, error) lives
+/// on [TurkeyPackageService] — this widget is a pure view. That means
+/// navigating away, rotating, or backgrounding the app no longer cancels
+/// the transfer; coming back simply rebinds to the same in-flight state.
 class MapDownloadScreen extends ConsumerStatefulWidget {
   const MapDownloadScreen({super.key});
 
@@ -34,21 +34,10 @@ class _MapDownloadScreenState extends ConsumerState<MapDownloadScreen> {
   Object? _manifestError;
   bool _loadingManifest = false;
 
-  StreamSubscription<double>? _downloadSub;
-  double _progress = 0;
-  bool _downloading = false;
-  Object? _downloadError;
-
   @override
   void initState() {
     super.initState();
     _loadManifest();
-  }
-
-  @override
-  void dispose() {
-    _downloadSub?.cancel();
-    super.dispose();
   }
 
   Future<void> _loadManifest() async {
@@ -73,39 +62,16 @@ class _MapDownloadScreenState extends ConsumerState<MapDownloadScreen> {
     }
   }
 
-  Future<void> _startDownload() async {
+  void _startDownload() {
     final manifest = _manifest;
-    if (manifest == null || _downloading) return;
+    if (manifest == null) return;
 
-    setState(() {
-      _downloading = true;
-      _progress = 0;
-      _downloadError = null;
-    });
-
-    final svc = ref.read(turkeyPackageServiceProvider);
-    _downloadSub = svc.download(manifest).listen(
-      (p) {
+    // Fire-and-forget — the future's lifecycle is tracked inside the
+    // service. We only await the Future here to capture the error via
+    // SnackBar; the view stays in sync via the progress provider.
+    ref.read(turkeyPackageServiceProvider).startDownload(manifest).then(
+      (_) {
         if (!mounted) return;
-        setState(() => _progress = p);
-      },
-      onError: (Object e) {
-        if (!mounted) return;
-        setState(() {
-          _downloading = false;
-          _downloadError = e;
-        });
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text('İndirme başarısız: $e'),
-          backgroundColor: AppColors.error,
-        ));
-      },
-      onDone: () {
-        if (!mounted) return;
-        setState(() {
-          _downloading = false;
-          _progress = 1.0;
-        });
         ref.invalidate(turkeyPackInfoProvider);
         ref.invalidate(turkeyPackInstalledProvider);
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
@@ -113,18 +79,18 @@ class _MapDownloadScreenState extends ConsumerState<MapDownloadScreen> {
           backgroundColor: AppColors.success,
         ));
       },
+      onError: (Object e) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('İndirme başarısız: $e'),
+          backgroundColor: AppColors.error,
+        ));
+      },
     );
   }
 
   void _cancelDownload() {
     ref.read(turkeyPackageServiceProvider).cancel();
-    _downloadSub?.cancel();
-    if (mounted) {
-      setState(() {
-        _downloading = false;
-        _progress = 0;
-      });
-    }
   }
 
   Future<void> _uninstall() async {
@@ -153,7 +119,9 @@ class _MapDownloadScreenState extends ConsumerState<MapDownloadScreen> {
     );
     if (ok != true || !mounted) return;
 
-    await ref.read(turkeyPackageServiceProvider).uninstall();
+    final svc = ref.read(turkeyPackageServiceProvider);
+    await svc.uninstall();
+    svc.resetDownloadState();
     ref.invalidate(turkeyPackInfoProvider);
     ref.invalidate(turkeyPackInstalledProvider);
     if (mounted) {
@@ -167,6 +135,8 @@ class _MapDownloadScreenState extends ConsumerState<MapDownloadScreen> {
   @override
   Widget build(BuildContext context) {
     final infoAsync = ref.watch(turkeyPackInfoProvider);
+    final progressAsync = ref.watch(turkeyPackDownloadProgressProvider);
+    final progress = progressAsync.valueOrNull ?? DownloadProgress.idle;
 
     return Scaffold(
       backgroundColor: AppColors.background,
@@ -177,7 +147,7 @@ class _MapDownloadScreenState extends ConsumerState<MapDownloadScreen> {
       body: ResponsivePageBody(
         maxWidth: 720,
         child: infoAsync.when(
-          data: (info) => _buildBody(info),
+          data: (info) => _buildBody(info, progress),
           loading: () => const Center(child: CircularProgressIndicator()),
           error: (e, _) => Center(
             child: Text('Durum okunamadı: $e',
@@ -188,8 +158,9 @@ class _MapDownloadScreenState extends ConsumerState<MapDownloadScreen> {
     );
   }
 
-  Widget _buildBody(TurkeyPackInfo info) {
+  Widget _buildBody(TurkeyPackInfo info, DownloadProgress progress) {
     final installed = info.status == TurkeyPackStatus.installed;
+    final downloading = progress.phase == DownloadPhase.downloading;
     return ListView(
       padding: const EdgeInsets.all(16),
       children: [
@@ -198,12 +169,11 @@ class _MapDownloadScreenState extends ConsumerState<MapDownloadScreen> {
           manifest: _manifest,
           loadingManifest: _loadingManifest,
           manifestError: _manifestError,
-          downloading: _downloading,
-          progress: _progress,
-          downloadError: _downloadError,
-          onDownload: _manifest == null || installed ? null : _startDownload,
-          onCancel: _downloading ? _cancelDownload : null,
-          onUninstall: installed && !_downloading ? _uninstall : null,
+          progress: progress,
+          onDownload:
+              _manifest == null || installed || downloading ? null : _startDownload,
+          onCancel: downloading ? _cancelDownload : null,
+          onUninstall: installed && !downloading ? _uninstall : null,
           onRetryManifest: _manifestError != null ? _loadManifest : null,
         ),
         const SizedBox(height: 24),
@@ -219,9 +189,7 @@ class _PackCard extends StatelessWidget {
     required this.manifest,
     required this.loadingManifest,
     required this.manifestError,
-    required this.downloading,
     required this.progress,
-    required this.downloadError,
     required this.onDownload,
     required this.onCancel,
     required this.onUninstall,
@@ -232,9 +200,7 @@ class _PackCard extends StatelessWidget {
   final TurkeyPackManifest? manifest;
   final bool loadingManifest;
   final Object? manifestError;
-  final bool downloading;
-  final double progress;
-  final Object? downloadError;
+  final DownloadProgress progress;
   final VoidCallback? onDownload;
   final VoidCallback? onCancel;
   final VoidCallback? onUninstall;
@@ -243,6 +209,7 @@ class _PackCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final installed = info.status == TurkeyPackStatus.installed;
+    final downloading = progress.phase == DownloadPhase.downloading;
     final statusLabel = installed
         ? 'Kurulu'
         : downloading
@@ -394,19 +361,32 @@ class _PackCard extends StatelessWidget {
 
           if (downloading) ...[
             const SizedBox(height: 16),
-            Text(
-              '${(progress * 100).toStringAsFixed(1)}%',
-              style: TextStyle(
-                color: AppColors.primary,
-                fontSize: 14,
-                fontWeight: FontWeight.w600,
-              ),
+            Row(
+              children: [
+                Text(
+                  '${(progress.progress * 100).toStringAsFixed(1)}%',
+                  style: TextStyle(
+                    color: AppColors.primary,
+                    fontSize: 14,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                const Spacer(),
+                if (progress.bytesTotal > 0)
+                  Text(
+                    '${_fmtBytes(progress.bytesReceived)} / ${_fmtBytes(progress.bytesTotal)}',
+                    style: TextStyle(
+                      color: AppColors.textSecondary,
+                      fontSize: 11,
+                    ),
+                  ),
+              ],
             ),
             const SizedBox(height: 6),
             ClipRRect(
               borderRadius: BorderRadius.circular(3),
               child: LinearProgressIndicator(
-                value: progress > 0 ? progress : null,
+                value: progress.progress > 0 ? progress.progress : null,
                 backgroundColor: AppColors.surfaceVariant,
                 color: AppColors.primary,
                 minHeight: 5,
@@ -536,7 +516,9 @@ class _InfoBox extends StatelessWidget {
           Text(
             'Bu paket Türkiye\'nin tüm harita kaplamasını, offline rota '
             'hesaplama grafiğini ve adres arama veritabanını içerir. '
-            'Bir kez indirildikten sonra internet bağlantısı gerekmez.',
+            'Bir kez indirildikten sonra internet bağlantısı gerekmez. '
+            'İndirme sırasında ekrandan çıkabilir, uygulamayı alta '
+            'alabilirsin — indirme arka planda devam eder.',
             style: TextStyle(color: AppColors.textSecondary, fontSize: 12, height: 1.4),
           ),
           if (info.status == TurkeyPackStatus.installed) ...[
