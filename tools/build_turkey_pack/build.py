@@ -239,6 +239,9 @@ def _graphhopper_config_yaml(ctx: BuildContext, cache: Path) -> str:
         "graphhopper:\n"
         f"  datareader.file: {ctx.pbf_path}\n"
         f"  graph.location: {cache}\n"
+        # GraphHopper 9.x: declare every encoded value referenced by any
+        # custom model up-front, or prepareImport() refuses to start.
+        "  graph.encoded_values: road_class, car_average_speed\n"
         "  import.osm.ignored_highways: footway,cycleway,path,pedestrian,steps\n"
         "  profiles:\n"
         f"{profiles_yaml}\n"
