@@ -193,13 +193,15 @@ def build_graph(ctx: BuildContext) -> None:
     gh_config = cache.parent / "graphhopper.yml"
     gh_config.write_text(_graphhopper_config_yaml(ctx, cache), encoding="utf-8")
 
+    # GraphHopper 9.x `import` subcommand takes the config YAML as a
+    # positional argument (the PBF path lives inside it as datareader.file).
+    #   java -jar graphhopper-web.jar import graphhopper.yml
     cmd = [
         tools["java"],
         f"-Xmx{heap}",
         "-jar", str(jar),
         "import",
-        str(ctx.pbf_path),
-        "--config", str(gh_config),
+        str(gh_config),
     ]
     run(cmd)
 
