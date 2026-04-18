@@ -83,7 +83,7 @@ jobs:
           echo "Downloading $URL"
           curl -fL -o "tools/build_turkey_pack/bin/graphhopper-web-${GH_VERSION}.jar" "$URL"
 
-      - name: Run build
+      - name: Run build (with retry on transient download failures)
         env:
           BASE_URL: https://github.com/${{ github.repository }}/releases/download/turkey-pack-${{ env.PACK_VERSION }}
         run: |
@@ -97,7 +97,34 @@ jobs:
           data['tools']['graphhopper_jar'] = f"bin/graphhopper-web-${{ env.GH_VERSION }}.jar"
           p.write_text(yaml.safe_dump(data, sort_keys=False))
           PY
-          python build.py --version "$PACK_VERSION" --base-url "$BASE_URL"
+
+          # Retry up to 3 times — OSM CDN and Geofabrik can be flaky.
+          # --skip-download + --skip-pmtiles short-circuit the completed
+          # stages on subsequent attempts so we don't re-spend 20 minutes
+          # on every retry.
+          set +e
+          for attempt in 1 2 3; do
+            echo "── Attempt $attempt ──"
+            if [ "$attempt" = "1" ]; then
+              python build.py --version "$PACK_VERSION" --base-url "$BASE_URL"
+            else
+              python build.py --version "$PACK_VERSION" --base-url "$BASE_URL" \
+                --skip-download --skip-pmtiles --skip-graph --skip-addresses 2>/dev/null
+              # Rerun missing stages. build.py's --skip-* flags only skip
+              # when the output already exists, so unfinished stages still run.
+              python build.py --version "$PACK_VERSION" --base-url "$BASE_URL" \
+                --skip-download
+            fi
+            rc=$?
+            if [ $rc -eq 0 ]; then
+              echo "Build succeeded on attempt $attempt"
+              exit 0
+            fi
+            echo "Attempt $attempt failed (exit $rc); retrying in 30s…"
+            sleep 30
+          done
+          echo "All attempts failed"
+          exit 1
 
       - name: List outputs
         run: |
