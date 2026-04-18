@@ -215,19 +215,15 @@ def build_graph(ctx: BuildContext) -> None:
 
 
 def _graphhopper_config_yaml(ctx: BuildContext, cache: Path) -> str:
-    # IMPORTANT: do NOT use weighting=custom on Android. GraphHopper
-    # compiles custom-model expressions with Janino, which can't load
-    # Android's DEX class files → "Cannot compile expression".
-    #
-    # But GraphHopper 9.x's prepareImport() still walks each profile's
-    # custom_model regardless of the weighting and NPEs when the field
-    # is null. So we set weighting=shortest AND an explicit empty
-    # custom_model {} to give it something non-null to iterate over.
+    # GraphHopper 8.x still supports classic (vehicle, weighting) pairs
+    # with no custom_model, no Janino, no runtime expression compiler —
+    # exactly what we need on Android. 9.x dropped this in favour of
+    # weighting=custom, which is incompatible with DEX.
     profiles_yaml = "\n".join(
         (
             f"    - name: {p['name']}\n"
-            f"      weighting: shortest\n"
-            f"      custom_model: {{}}\n"
+            f"      vehicle: {p.get('vehicle', p['name'])}\n"
+            f"      weighting: {p.get('weighting', 'fastest')}\n"
         )
         for p in ctx.config["graph"]["profiles"]
     )
@@ -235,7 +231,7 @@ def _graphhopper_config_yaml(ctx: BuildContext, cache: Path) -> str:
         "graphhopper:\n"
         f"  datareader.file: {ctx.pbf_path}\n"
         f"  graph.location: {cache}\n"
-        "  graph.encoded_values: road_class, car_average_speed\n"
+        f"  graph.flag_encoders: {','.join(p.get('vehicle', p['name']) for p in ctx.config['graph']['profiles'])}\n"
         "  import.osm.ignored_highways: footway,cycleway,path,pedestrian,steps\n"
         "  profiles:\n"
         f"{profiles_yaml}\n"

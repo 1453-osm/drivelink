@@ -9,6 +9,7 @@ import 'package:drivelink/core/services/connectivity_service.dart';
 import 'package:drivelink/core/services/tts_service.dart';
 import 'package:drivelink/features/ai/data/datasources/ai_assistant_service.dart';
 import 'package:drivelink/features/ai/data/datasources/gemini_source.dart';
+import 'package:drivelink/features/ai/data/datasources/groq_source.dart';
 import 'package:drivelink/features/ai/data/datasources/openrouter_source.dart';
 import 'package:drivelink/features/ai/presentation/providers/ai_provider.dart';
 import 'package:drivelink/shared/widgets/responsive_page_body.dart';
@@ -23,18 +24,24 @@ class AiSettingsScreen extends ConsumerStatefulWidget {
 class _AiSettingsScreenState extends ConsumerState<AiSettingsScreen> {
   final _geminiKeyController = TextEditingController();
   final _openRouterKeyController = TextEditingController();
+  final _groqKeyController = TextEditingController();
   bool _geminiKeyObscured = true;
   bool _openRouterKeyObscured = true;
+  bool _groqKeyObscured = true;
   String? _testResult;
   bool _testing = false;
   bool _loadingGeminiModels = false;
   bool _loadingOpenRouterModels = false;
+  bool _loadingGroqModels = false;
   String? _geminiModelsError;
   String? _openRouterModelsError;
+  String? _groqModelsError;
   List<GeminiModelInfo> _geminiModels = const [];
   List<OpenRouterModelInfo> _openRouterModels = const [];
+  List<GroqModelInfo> _groqModels = const [];
   String _selectedGeminiModel = GeminiSource.defaultModel;
   String _selectedOpenRouterModel = OpenRouterSource.defaultModel;
+  String _selectedGroqModel = GroqSource.defaultModel;
   String _selectedChatProvider = 'gemini';
   bool _ttsDownloading = false;
   String _ttsStatus = '';
@@ -48,13 +55,17 @@ class _AiSettingsScreenState extends ConsumerState<AiSettingsScreen> {
       final geminiModel = await repo.get(SettingsKeys.geminiModel);
       final openRouterKey = await repo.get(SettingsKeys.openRouterApiKey);
       final openRouterModel = await repo.get(SettingsKeys.openRouterModel);
+      final groqKey = await repo.get(SettingsKeys.groqApiKey);
+      final groqModel = await repo.get(SettingsKeys.groqModel);
       final chatProvider = await repo.getOrDefault(
         SettingsKeys.chatProvider,
         'gemini',
       );
-      final normalizedChatProvider = chatProvider == 'openrouter'
-          ? 'openrouter'
-          : 'gemini';
+      final normalizedChatProvider = switch (chatProvider) {
+        'openrouter' => 'openrouter',
+        'groq' => 'groq',
+        _ => 'gemini',
+      };
       final service = ref.read(aiAssistantServiceProvider);
 
       if (mounted) {
@@ -63,11 +74,17 @@ class _AiSettingsScreenState extends ConsumerState<AiSettingsScreen> {
           if (openRouterKey != null) {
             _openRouterKeyController.text = openRouterKey;
           }
+          if (groqKey != null) {
+            _groqKeyController.text = groqKey;
+          }
           if (geminiModel != null && geminiModel.isNotEmpty) {
             _selectedGeminiModel = geminiModel;
           }
           if (openRouterModel != null && openRouterModel.isNotEmpty) {
             _selectedOpenRouterModel = openRouterModel;
+          }
+          if (groqModel != null && groqModel.isNotEmpty) {
+            _selectedGroqModel = groqModel;
           }
           _selectedChatProvider = normalizedChatProvider;
         });
@@ -75,8 +92,10 @@ class _AiSettingsScreenState extends ConsumerState<AiSettingsScreen> {
 
       service.setGeminiApiKey(_geminiKeyController.text.trim());
       service.setOpenRouterApiKey(_openRouterKeyController.text.trim());
+      service.setGroqApiKey(_groqKeyController.text.trim());
       service.setGeminiModel(_selectedGeminiModel);
       service.setOpenRouterModel(_selectedOpenRouterModel);
+      service.setGroqModel(_selectedGroqModel);
       service.setChatProvider(normalizedChatProvider);
 
       if (_geminiKeyController.text.trim().isNotEmpty) {
@@ -94,6 +113,14 @@ class _AiSettingsScreenState extends ConsumerState<AiSettingsScreen> {
           _openRouterModels = _mergedOpenRouterModels(const []);
         });
       }
+
+      if (_groqKeyController.text.trim().isNotEmpty) {
+        await _refreshGroqModels();
+      } else if (mounted) {
+        setState(() {
+          _groqModels = _mergedGroqModels(const []);
+        });
+      }
     });
   }
 
@@ -101,6 +128,7 @@ class _AiSettingsScreenState extends ConsumerState<AiSettingsScreen> {
   void dispose() {
     _geminiKeyController.dispose();
     _openRouterKeyController.dispose();
+    _groqKeyController.dispose();
     super.dispose();
   }
 
@@ -112,17 +140,22 @@ class _AiSettingsScreenState extends ConsumerState<AiSettingsScreen> {
     final service = ref.read(aiAssistantServiceProvider);
     final geminiKey = _geminiKeyController.text.trim();
     final openRouterKey = _openRouterKeyController.text.trim();
+    final groqKey = _groqKeyController.text.trim();
 
     await repo.set(SettingsKeys.geminiApiKey, geminiKey);
     await repo.set(SettingsKeys.openRouterApiKey, openRouterKey);
+    await repo.set(SettingsKeys.groqApiKey, groqKey);
     await repo.set(SettingsKeys.geminiModel, _selectedGeminiModel);
     await repo.set(SettingsKeys.openRouterModel, _selectedOpenRouterModel);
+    await repo.set(SettingsKeys.groqModel, _selectedGroqModel);
     await repo.set(SettingsKeys.chatProvider, _selectedChatProvider);
 
     service.setGeminiApiKey(geminiKey);
     service.setOpenRouterApiKey(openRouterKey);
+    service.setGroqApiKey(groqKey);
     service.setGeminiModel(_selectedGeminiModel);
     service.setOpenRouterModel(_selectedOpenRouterModel);
+    service.setGroqModel(_selectedGroqModel);
     service.setChatProvider(_selectedChatProvider);
 
     if (refreshModels &&
@@ -133,6 +166,10 @@ class _AiSettingsScreenState extends ConsumerState<AiSettingsScreen> {
         _selectedChatProvider == 'openrouter' &&
         openRouterKey.isNotEmpty) {
       await _refreshOpenRouterModels(showFeedback: false);
+    } else if (refreshModels &&
+        _selectedChatProvider == 'groq' &&
+        groqKey.isNotEmpty) {
+      await _refreshGroqModels(showFeedback: false);
     }
 
     if (mounted && showSnackBar) {
@@ -160,6 +197,7 @@ class _AiSettingsScreenState extends ConsumerState<AiSettingsScreen> {
       'openrouter' => service.openRouter.testConnection(
         model: _selectedOpenRouterModel,
       ),
+      'groq' => service.groq.testConnection(model: _selectedGroqModel),
       _ => service.gemini.testConnection(model: _selectedGeminiModel),
     };
 
@@ -269,6 +307,55 @@ class _AiSettingsScreenState extends ConsumerState<AiSettingsScreen> {
     }
   }
 
+  Future<void> _refreshGroqModels({bool showFeedback = false}) async {
+    final groqKey = _groqKeyController.text.trim();
+    if (groqKey.isEmpty) {
+      if (mounted) {
+        setState(() {
+          _groqModels = _mergedGroqModels(const []);
+          _groqModelsError =
+              'API anahtarini girdikten sonra Groq modelleri yuklenir.';
+        });
+      }
+      return;
+    }
+
+    final service = ref.read(aiAssistantServiceProvider);
+    service.setGroqApiKey(groqKey);
+    service.setGroqModel(_selectedGroqModel);
+
+    if (mounted) {
+      setState(() {
+        _loadingGroqModels = true;
+        _groqModelsError = null;
+      });
+    }
+
+    final models = await service.groq.listAvailableModels();
+    if (!mounted) return;
+
+    setState(() {
+      _loadingGroqModels = false;
+      _groqModels = _mergedGroqModels(models);
+      _groqModelsError = models.isEmpty
+          ? 'Groq model listesi alinamadi. Anahtari kaydedip tekrar dene.'
+          : null;
+    });
+
+    if (showFeedback) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            models.isEmpty
+                ? 'Groq modeli alinamadi'
+                : '${models.length} Groq modeli yuklendi',
+          ),
+          duration: const Duration(seconds: 1),
+        ),
+      );
+    }
+  }
+
   List<GeminiModelInfo> _mergedGeminiModels(List<GeminiModelInfo> models) {
     final merged = [...models];
     final hasSelected = merged.any((model) => model.id == _selectedGeminiModel);
@@ -309,6 +396,30 @@ class _AiSettingsScreenState extends ConsumerState<AiSettingsScreen> {
     return merged;
   }
 
+  List<GroqModelInfo> _mergedGroqModels(List<GroqModelInfo> models) {
+    final merged = [...models];
+    final hasSelected = merged.any((model) => model.id == _selectedGroqModel);
+
+    if (!hasSelected) {
+      merged.insert(
+        0,
+        GroqModelInfo(
+          id: _selectedGroqModel,
+          displayName: _selectedGroqModel,
+        ),
+      );
+    }
+
+    return merged;
+  }
+
+  GroqModelInfo? _currentGroqModelInfo() {
+    for (final model in _groqModels) {
+      if (model.id == _selectedGroqModel) return model;
+    }
+    return null;
+  }
+
   GeminiModelInfo? _currentGeminiModelInfo() {
     for (final model in _geminiModels) {
       if (model.id == _selectedGeminiModel) return model;
@@ -344,9 +455,13 @@ class _AiSettingsScreenState extends ConsumerState<AiSettingsScreen> {
         ref.read(connectivityServiceProvider).isOnline;
     final selectedGeminiInfo = _currentGeminiModelInfo();
     final selectedOpenRouterInfo = _currentOpenRouterModelInfo();
+    final selectedGroqInfo = _currentGroqModelInfo();
     final isOpenRouterSelected = _selectedChatProvider == 'openrouter';
+    final isGroqSelected = _selectedChatProvider == 'groq';
     final selectedProviderLabel = isOpenRouterSelected
         ? 'OpenRouter ($_selectedOpenRouterModel)'
+        : isGroqSelected
+        ? 'Groq ($_selectedGroqModel)'
         : 'Gemini ($_selectedGeminiModel)';
 
     return Scaffold(
@@ -405,6 +520,10 @@ class _AiSettingsScreenState extends ConsumerState<AiSettingsScreen> {
                     value == 'openrouter' &&
                     _openRouterModels.isEmpty &&
                     _openRouterKeyController.text.trim().isNotEmpty;
+                final shouldLoadGroq =
+                    value == 'groq' &&
+                    _groqModels.isEmpty &&
+                    _groqKeyController.text.trim().isNotEmpty;
                 setState(() {
                   _selectedChatProvider = value;
                   _testResult = null;
@@ -413,6 +532,8 @@ class _AiSettingsScreenState extends ConsumerState<AiSettingsScreen> {
                   _refreshGeminiModels();
                 } else if (shouldLoadOpenRouter) {
                   _refreshOpenRouterModels();
+                } else if (shouldLoadGroq) {
+                  _refreshGroqModels();
                 }
               },
             ),
@@ -443,8 +564,40 @@ class _AiSettingsScreenState extends ConsumerState<AiSettingsScreen> {
               infoText:
                   'Grok ve Qwen modelleri ustte tutulur; diger seceneklerde ucretsiz modeller listelenir.',
             ),
+            const SizedBox(height: 12),
+            _ApiKeyCard(
+              title: 'Groq API Anahtari',
+              controller: _groqKeyController,
+              obscured: _groqKeyObscured,
+              onToggleObscure: () =>
+                  setState(() => _groqKeyObscured = !_groqKeyObscured),
+              hint: 'gsk_...',
+              instructions:
+                  'console.groq.com > API Keys\nSohbet saglayicisi olarak Groq secilirse bu anahtar kullanilir.',
+              infoText:
+                  'Groq hesabinin erisebildigi tum modeller listelenir, istediginizi secebilirsiniz.',
+            ),
             const SizedBox(height: 8),
-            if (!isOpenRouterSelected) ...[
+            if (isGroqSelected) ...[
+              _GroqModelCard(
+                models: _groqModels,
+                selectedModel: _selectedGroqModel,
+                selectedInfo: selectedGroqInfo,
+                loading: _loadingGroqModels,
+                errorText: _groqModelsError,
+                onChanged: (value) {
+                  if (value == null) return;
+                  setState(() {
+                    _selectedGroqModel = value;
+                    _testResult = null;
+                  });
+                },
+                onRefresh: _loadingGroqModels
+                    ? null
+                    : () => _refreshGroqModels(showFeedback: true),
+              ),
+              const SizedBox(height: 8),
+            ] else if (!isOpenRouterSelected) ...[
               _GeminiModelCard(
                 models: _geminiModels,
                 selectedModel: _selectedGeminiModel,
@@ -789,6 +942,7 @@ class _ChatProviderCard extends StatelessWidget {
             items: const [
               DropdownMenuItem(value: 'gemini', child: Text('Gemini')),
               DropdownMenuItem(value: 'openrouter', child: Text('OpenRouter')),
+              DropdownMenuItem(value: 'groq', child: Text('Groq')),
             ],
             onChanged: onChanged,
           ),

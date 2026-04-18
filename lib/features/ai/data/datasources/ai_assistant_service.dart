@@ -6,6 +6,7 @@ import 'package:flutter/foundation.dart';
 import 'package:drivelink/core/services/audio_service.dart';
 import 'package:drivelink/core/services/tts_service.dart';
 import 'package:drivelink/features/ai/data/datasources/gemini_source.dart';
+import 'package:drivelink/features/ai/data/datasources/groq_source.dart';
 import 'package:drivelink/features/ai/data/datasources/openrouter_source.dart';
 import 'package:drivelink/features/ai/data/datasources/vosk_source.dart';
 import 'package:permission_handler/permission_handler.dart';
@@ -96,6 +97,7 @@ class AiAssistantService {
   final VoskSource _vosk = VoskSource();
   final GeminiSource _gemini = GeminiSource();
   final OpenRouterSource _openRouter = OpenRouterSource();
+  final GroqSource _groq = GroqSource();
   final IntentParser _intentParser = IntentParser();
   String _chatProvider = 'gemini';
 
@@ -125,10 +127,12 @@ class AiAssistantService {
   bool get isChatAvailable => _isOnline && _activeSourceConfigured;
   bool get _activeSourceConfigured => switch (_chatProvider) {
     'openrouter' => _openRouter.isConfigured,
+    'groq' => _groq.isConfigured,
     _ => _gemini.isConfigured,
   };
   GeminiSource get gemini => _gemini;
   OpenRouterSource get openRouter => _openRouter;
+  GroqSource get groq => _groq;
   String get chatProvider => _chatProvider;
 
   /// Initialize Vosk speech recognition.
@@ -175,9 +179,25 @@ class AiAssistantService {
     _emit(_snapshot.copyWith(chatAvailable: isChatAvailable));
   }
 
+  /// Set Groq API key.
+  void setGroqApiKey(String key) {
+    _groq.setApiKey(key);
+    _emit(_snapshot.copyWith(chatAvailable: isChatAvailable));
+  }
+
+  /// Set Groq model.
+  void setGroqModel(String model) {
+    _groq.setModel(model);
+    _emit(_snapshot.copyWith(chatAvailable: isChatAvailable));
+  }
+
   /// Switch the active cloud chat provider.
   void setChatProvider(String provider) {
-    _chatProvider = provider == 'openrouter' ? 'openrouter' : 'gemini';
+    _chatProvider = switch (provider) {
+      'openrouter' => 'openrouter',
+      'groq' => 'groq',
+      _ => 'gemini',
+    };
     _emit(_snapshot.copyWith(chatAvailable: isChatAvailable));
   }
 
@@ -1049,6 +1069,16 @@ class AiAssistantService {
     if (_chatProvider == 'openrouter') {
       if (_openRouter.isConfigured) {
         text = await _openRouter.generate(
+          query,
+          vehicleState: _vehicleState,
+          obdData: _obdData,
+          vehicleName: _vehicleProfileName,
+          history: history,
+        );
+      }
+    } else if (_chatProvider == 'groq') {
+      if (_groq.isConfigured) {
+        text = await _groq.generate(
           query,
           vehicleState: _vehicleState,
           obdData: _obdData,

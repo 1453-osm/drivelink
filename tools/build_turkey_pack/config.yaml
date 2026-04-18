@@ -15,7 +15,7 @@ source:
 tools:
   java: java
   basemap_jar: bin/drivelink-basemap.jar
-  graphhopper_jar: bin/graphhopper-web-9.1.jar
+  graphhopper_jar: bin/graphhopper-web-8.0.jar
   pmtiles_cli: bin/pmtiles
   osmium: osmium
   sqlite3: sqlite3

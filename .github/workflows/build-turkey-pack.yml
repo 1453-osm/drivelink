@@ -10,7 +10,7 @@ on:
       graphhopper_version:
         description: 'GraphHopper release to use'
         required: true
-        default: '9.1'
+        default: '8.0'
 
 permissions:
   contents: write

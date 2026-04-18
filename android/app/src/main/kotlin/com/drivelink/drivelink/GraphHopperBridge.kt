@@ -5,7 +5,6 @@ import com.graphhopper.GHResponse
 import com.graphhopper.GraphHopper
 import com.graphhopper.config.CHProfile
 import com.graphhopper.config.Profile
-import com.graphhopper.util.CustomModel
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
@@ -72,20 +71,16 @@ class GraphHopperBridge(engine: FlutterEngine) : MethodCallHandler {
                 // so heap stays tiny.
                 System.setProperty("graphhopper.graph.dataaccess.default_type", "MMAP")
 
-                // "shortest" weighting + empty CustomModel matches the
-                // profile baked into the graph by build.py. We avoid
-                // weighting=custom because GraphHopper compiles custom-
-                // model expressions with Janino, which cannot load
-                // Android DEX class files. But GraphHopper 9.x still
-                // requires the custom_model field to be non-null even
-                // when weighting is "shortest", so we hand it an empty
-                // CustomModel.
+                // GraphHopper 8.x classic API: (vehicle, weighting) pair
+                // with no custom_model — no Janino, no DEX class-file
+                // loading, just runs. Must match the profile baked into
+                // the graph by build.py.
                 val gh = GraphHopper()
                 gh.graphHopperLocation = graphPath
                 gh.profiles = listOf(
                     Profile(profile)
-                        .setWeighting("shortest")
-                        .setCustomModel(CustomModel()),
+                        .setVehicle(profile)
+                        .setWeighting("fastest"),
                 )
                 gh.chPreparationHandler.setCHProfiles(CHProfile(profile))
                 gh.importOrLoad()

@@ -22,6 +22,8 @@ abstract class SettingsKeys {
   static const geminiModel = 'gemini_model';
   static const openRouterApiKey = 'openrouter_api_key';
   static const openRouterModel = 'openrouter_model';
+  static const groqApiKey = 'groq_api_key';
+  static const groqModel = 'groq_model';
   static const claudeApiKey = 'claude_api_key';
   static const chatProvider =
       'chat_provider'; // kept for backward compatibility

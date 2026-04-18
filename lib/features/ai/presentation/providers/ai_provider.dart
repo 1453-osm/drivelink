@@ -89,6 +89,14 @@ final aiInitProvider = FutureProvider<bool>((ref) async {
   if (openRouterModel != null && openRouterModel.isNotEmpty) {
     service.setOpenRouterModel(openRouterModel);
   }
+  final groqKey = await repo.get(SettingsKeys.groqApiKey);
+  if (groqKey != null && groqKey.isNotEmpty) {
+    service.setGroqApiKey(groqKey);
+  }
+  final groqModel = await repo.get(SettingsKeys.groqModel);
+  if (groqModel != null && groqModel.isNotEmpty) {
+    service.setGroqModel(groqModel);
+  }
   service.setChatProvider(
     await repo.getOrDefault(SettingsKeys.chatProvider, 'gemini'),
   );
