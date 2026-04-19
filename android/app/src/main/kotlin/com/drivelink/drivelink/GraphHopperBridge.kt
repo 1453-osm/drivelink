@@ -5,6 +5,7 @@ import com.graphhopper.GHResponse
 import com.graphhopper.GraphHopper
 import com.graphhopper.config.CHProfile
 import com.graphhopper.config.Profile
+import com.graphhopper.util.CustomModel
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
@@ -71,16 +72,19 @@ class GraphHopperBridge(engine: FlutterEngine) : MethodCallHandler {
                 // so heap stays tiny.
                 System.setProperty("graphhopper.graph.dataaccess.default_type", "MMAP")
 
-                // GraphHopper 8.x classic API: (vehicle, weighting) pair
-                // with no custom_model — no Janino, no DEX class-file
-                // loading, just runs. Must match the profile baked into
-                // the graph by build.py.
+                // GraphHopper 9.x: weighting=custom is mandatory, but a
+                // CustomModel that sets only distance_influence (no
+                // priority/speed EXPRESSIONS) skips Janino entirely —
+                // so this runs on Android's DEX runtime. Must byte-match
+                // the custom_model in build.py's graphhopper.yml.
+                val customModel = CustomModel().setDistanceInfluence(70.0)
+
                 val gh = GraphHopper()
                 gh.graphHopperLocation = graphPath
                 gh.profiles = listOf(
                     Profile(profile)
-                        .setVehicle(profile)
-                        .setWeighting("fastest"),
+                        .setWeighting("custom")
+                        .setCustomModel(customModel),
                 )
                 gh.chPreparationHandler.setCHProfiles(CHProfile(profile))
                 gh.importOrLoad()

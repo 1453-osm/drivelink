@@ -215,15 +215,20 @@ def build_graph(ctx: BuildContext) -> None:
 
 
 def _graphhopper_config_yaml(ctx: BuildContext, cache: Path) -> str:
-    # GraphHopper 8.x still supports classic (vehicle, weighting) pairs
-    # with no custom_model, no Janino, no runtime expression compiler —
-    # exactly what we need on Android. 9.x dropped this in favour of
-    # weighting=custom, which is incompatible with DEX.
+    # GraphHopper 9.x mandates weighting=custom. Its custom_model parser
+    # only invokes Janino when there are priority/speed EXPRESSIONS to
+    # compile. A model containing only `distance_influence` (a scalar)
+    # skips the compiler entirely — giving us Android-compatible routing
+    # with a well-supported weighting.
+    #
+    # distance_influence default is 70 s/km; higher values push the
+    # router toward shorter, more direct paths.
     profiles_yaml = "\n".join(
         (
             f"    - name: {p['name']}\n"
-            f"      vehicle: {p.get('vehicle', p['name'])}\n"
-            f"      weighting: {p.get('weighting', 'fastest')}\n"
+            f"      weighting: custom\n"
+            f"      custom_model:\n"
+            f"        distance_influence: 70\n"
         )
         for p in ctx.config["graph"]["profiles"]
     )
@@ -231,7 +236,7 @@ def _graphhopper_config_yaml(ctx: BuildContext, cache: Path) -> str:
         "graphhopper:\n"
         f"  datareader.file: {ctx.pbf_path}\n"
         f"  graph.location: {cache}\n"
-        f"  graph.flag_encoders: {','.join(p.get('vehicle', p['name']) for p in ctx.config['graph']['profiles'])}\n"
+        "  graph.encoded_values: road_class, car_average_speed\n"
         "  import.osm.ignored_highways: footway,cycleway,path,pedestrian,steps\n"
         "  profiles:\n"
         f"{profiles_yaml}\n"
